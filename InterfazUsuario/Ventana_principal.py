@@ -360,6 +360,10 @@ class VentanaPrincipal(QtWidgets.QWidget):
         print(
             f"DEBUG: Señal 'finalizado' recibida con args: {args} para worker tipo: {type(self.worker_activo).__name__ if self.worker_activo else 'None'}"
         )
+        
+        if not self.hilo_activo:
+            print("ADVERTENCIA: 'finalizado' recibido pero el hilo ya no existe. Ignorando.")
+            return
 
         carpeta_finalizada = self.folder_line_edit.text()  # Carpeta actual en la GUI
         worker_type = type(self.worker_activo) if self.worker_activo else None
@@ -416,6 +420,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
             QtWidgets.QMessageBox.information(self, titulo_popup, mensaje_popup)
         # NO limpiar referencias aquí, esperar a _limpiar_referencias_post_hilo
 
+        self.hilo_activo.quit()
     @QtCore.Slot(str)
     def _mostrar_error_critico(self, mensaje_error):
         """Maneja errores críticos."""
@@ -423,7 +428,12 @@ class VentanaPrincipal(QtWidgets.QWidget):
         QtWidgets.QMessageBox.critical(self, "Error Crítico", mensaje_error)
         # NO limpiar referencias aquí, esperar a _limpiar_referencias_post_hilo
         # Actualizar botones inmediatamente tras error
+        if not self.hilo_activo:
+            return
+
         self._actualizar_estado_botones(proceso_corriendo=False)
+        
+        self.hilo_activo.quit()                
 
     @QtCore.Slot()
     def _limpiar_referencias_post_hilo(self):
