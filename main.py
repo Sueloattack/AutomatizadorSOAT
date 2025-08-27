@@ -1,87 +1,65 @@
-# AutomatizadorSOAT/main.py
+# AutomatizadorSOAT/main.py (versión final optimizada)
 import sys
 import os
+from PySide6 import QtWidgets, QtCore, QtGui
 
-# Añadir ruta al sys.path (útil para PyInstaller y ejecución normal)
 project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# --- AÑADIR QtGui A LAS IMPORTACIONES ---
-from PySide6 import QtWidgets, QtCore, QtGui  # <--- Añadir QtGui aquí
-
-# -----------------------------------------
-
-# Importar la clase de la ventana principal
-# Asegúrate que la ruta/nombre de carpeta sea correcto
 try:
     from InterfazUsuario.Ventana_principal import VentanaPrincipal
-    from Core.utilidades import resource_path  # Importar para icono global
+    from Core.utilidades import resource_path
 except ImportError as e:
-    # Mostrar error si falla la importación inicial
-    app_temp = QtWidgets.QApplication.instance()
-    if app_temp is None:
-        app_temp = QtWidgets.QApplication(sys.argv)
-    QtWidgets.QMessageBox.critical(
-        None, "Error Crítico de Importación", f"No se pudo iniciar:\n{e}"
-    )
+    app_temp = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+    QtWidgets.QMessageBox.critical(None, "Error Crítico de Importación", f"No se pudo iniciar:\n{e}")
     sys.exit(1)
 
+def _setup_global_icon(app):
+    """
+    Intenta encontrar y establecer el icono global de la aplicación.
+    Busca en una lista de rutas priorizadas (.ico primero).
+    """
+    # Lista de posibles rutas para el icono, en orden de preferencia.
+    icon_paths_to_try = [
+        "Recursos/Icons/pingu.ico",
+        "Recursos/Icons/pingu.png" # Corregida la ruta a mayúsculas como en tu estructura
+    ]
+
+    for relative_path in icon_paths_to_try:
+        full_path = resource_path(relative_path)
+        if os.path.exists(full_path):
+            print(f"DEBUG: Intentando usar icono desde: {full_path}")
+            global_icon = QtGui.QIcon(full_path)
+            if not global_icon.isNull():
+                app.setWindowIcon(global_icon)
+                print(f"DEBUG: Icono global establecido con éxito.")
+                return # Salimos de la función en cuanto encontramos uno válido
+            else:
+                print(f"ADVERTENCIA: El archivo {full_path} no es un icono válido.")
+
+    print("ADVERTENCIA: No se pudo encontrar o establecer un icono de aplicación válido.")
 
 def main():
     """Función principal para lanzar la aplicación."""
     app = QtWidgets.QApplication(sys.argv)
-
-    # --- NO CERRAR AL OCULTAR VENTANA ---
     app.setQuitOnLastWindowClosed(False)
-    # ------------------------------------
 
-    # --- Establecer Icono Global (Intento) ---
-    global_icon = None
     try:
-        icon_path_ico = resource_path(
-            "Recursos/Icons/pingu.ico"
-        )  # INTENTA CON .ICO PRIMERO
-        if os.path.exists(icon_path_ico):
-            # AHORA QtGui.QIcon FUNCIONARÁ
-            global_icon = QtGui.QIcon(icon_path_ico)
-            print(f"DEBUG: Usando icono global desde: {icon_path_ico}")
-        else:
-            print(f"DEBUG: No se encontró {icon_path_ico}, intentando .png...")
-            icon_path_png = resource_path("recursos/iconos/pingu.png")
-            if os.path.exists(icon_path_png):
-                # AHORA QtGui.QIcon FUNCIONARÁ
-                global_icon = QtGui.QIcon(icon_path_png)
-                print(f"DEBUG: Usando icono global desde: {icon_path_png}")
-            else:
-                print(
-                    f"ADVERTENCIA: No se encontró archivo de icono en {icon_path_ico} ni {icon_path_png}"
-                )
-
-        if global_icon and not global_icon.isNull():
-            app.setWindowIcon(global_icon)
-        else:
-            print("ADVERTENCIA: No se pudo establecer icono global.")
-
+        # Llamada única y limpia a nuestra nueva función.
+        _setup_global_icon(app)
     except Exception as e:
-        print(f"ADVERTENCIA: Error estableciendo icono global: {e}")
-    # -------------------------------------------
+        # Este `try/except` es una salvaguarda por si algo muy raro pasa.
+        print(f"ADVERTENCIA: Falló el proceso de configuración del icono: {e}")
 
-    # Crear y mostrar la ventana principal
     try:
         window = VentanaPrincipal()
         window.show()
     except Exception as e_init:
-        QtWidgets.QMessageBox.critical(
-            None,
-            "Error al Iniciar",
-            f"No se pudo crear la ventana principal:\n{e_init}",
-        )
+        QtWidgets.QMessageBox.critical(None, "Error al Iniciar", f"No se pudo crear la ventana principal:\n{e_init}")
         sys.exit(1)
 
-    # Iniciar el bucle de eventos
     sys.exit(app.exec())
-
 
 if __name__ == "__main__":
     main()

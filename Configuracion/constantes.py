@@ -62,13 +62,22 @@ MUNDIAL_NOMBRE = "Seguros Mundial"
 AXA_ID = "axa"
 AXA_NOMBRE = "AXA Colpatria"
 # AXA_LOGIN_URL = "..."
-# ... otras constantes para AXA
 
-# --- Mapeo de Aseguradoras para la GUI ---
-# (ID_INTERNO, NOMBRE_MOSTRAR)
-# Esto facilita añadir nuevas aseguradoras al ComboBox
-ASEGURADORAS_CONFIG = [
-    (PREVISORA_NOMBRE, PREVISORA_ID),
-    (MUNDIAL_NOMBRE, MUNDIAL_ID),
-    (AXA_NOMBRE, AXA_ID),
-]
+# --- IDs INTERNOS PARA LAS ÁREAS ---
+AREA_GLOSAS_ID = "glosas"
+AREA_FACTURACION_ID = "facturacion"
+
+# --- CONFIGURACIÓN CENTRALIZADA POR ÁREA ---
+# Esto ahora es un diccionario. La clave es el ID del área.
+# El valor es la lista de aseguradoras disponibles para esa área.
+CONFIGURACION_AREAS = {
+    AREA_GLOSAS_ID: [
+        (PREVISORA_NOMBRE, PREVISORA_ID),
+        (MUNDIAL_NOMBRE, MUNDIAL_ID),
+        (AXA_NOMBRE, AXA_ID),
+    ],
+    AREA_FACTURACION_ID: [
+        # Quizás facturación solo está disponible para Previsora por ahora
+        (PREVISORA_NOMBRE, PREVISORA_ID),
+    ]
+}

@@ -5,42 +5,44 @@ from pathlib import Path
 from PySide6 import QtWidgets, QtCore, QtGui
 import traceback
 
-# Importar trabajadores y constantes
-# ¡¡ASEGÚRATE QUE LOS NOMBRES 'nucleo' y 'configuracion' coincidan con tus carpetas!!
 try:
     from Core.trabajador_automatizacion import TrabajadorAutomatizacion
     from Core.trabajador_reporte import TrabajadorReporte
-    from Core.utilidades import resource_path  # Importar resource_path
-    from Configuracion.constantes import APP_VERSION, ASEGURADORAS_CONFIG
+    from Core.utilidades import resource_path
+    from Configuracion.constantes import APP_VERSION, CONFIGURACION_AREAS, AREA_GLOSAS_ID, AREA_FACTURACION_ID
 except ImportError as e:
-    # Mostrar un error crítico si no se pueden importar los módulos principales
-    app = (
-        QtWidgets.QApplication.instance()
-    )  # Obtener instancia existente o crearla si no existe
-    if app is None:
-        app = QtWidgets.QApplication(sys.argv)
-    msg_box = QtWidgets.QMessageBox()
-    msg_box.setIcon(QtWidgets.QMessageBox.Icon.Critical)
-    msg_box.setWindowTitle("Error de Importación Crítico")
-    msg_box.setText(
-        f"Error importando módulos: {e}\nVerifique nombres/rutas de carpetas (nucleo, configuracion)."
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+    QtWidgets.QMessageBox.critical(
+        None, "Error de Importación Crítico",
+        f"Error importando módulos: {e}\nVerifique los nombres de las carpetas."
     )
-    msg_box.exec()
     sys.exit(1)
-
 
 class VentanaPrincipal(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-
-        # --- Inicialización de Atributos ---
+        # <<< CAMBIO: Atributos para controlar el estado de los toggles >>>
+        self.dark_mode_activo = False
+        self.headless_activo = True  # Empezamos con el modo 2do plano ACTIVADO por defecto
+        self.dark_theme_str = ""
+        
+        # <<< CAMBIO: Usar resource_path para encontrar el tema >>>
+        try:
+            # Construimos la ruta correcta al archivo QSS
+            theme_path = resource_path("InterfazUsuario/dark_theme.qss")
+            with open(theme_path, "r") as f:
+                self.dark_theme_str = f.read()
+        except FileNotFoundError:
+            print(f"ADVERTENCIA: No se encontró 'dark_theme.qss'. El modo oscuro no funcionará.")
+        
+        # El resto del __init__ es casi idéntico y correcto
         self.hilo_activo = None
         self.worker_activo = None
-        self.app_icon = None  # Inicializar icono
+        self.app_icon = None
 
         # --- Configuración Ventana ---
         self.setWindowTitle(f"Automatizador SOAT Glosas v{APP_VERSION}")
-        self.setGeometry(100, 100, 650, 600)
+        self.setGeometry(100, 100, 700, 600)
 
         # --- Cargar Icono ---
         self.ruta_icono_png = "Recursos/Icons/pingu.png"  # Ruta al PNG
@@ -62,6 +64,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
 
         # --- Crear Widgets y Layouts ---
         self._crear_titulo()
+        self._crear_grupo_seleccion_area()
         self._crear_grupo_seleccion_aseguradora()
         self._crear_grupo_seleccion_carpeta()
         self._crear_botones_accion()
@@ -69,6 +72,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
 
         # --- Añadir Widgets y Layouts al Principal ---
         self.main_layout.addLayout(self.titulo_layout)
+        self.main_layout.addWidget(self.grupo_seleccion_area) 
         self.main_layout.addWidget(self.grupo_seleccion_aseguradora)
         self.main_layout.addWidget(self.grupo_seleccion_carpeta)
         self.main_layout.addLayout(self.layout_botones)
@@ -76,10 +80,13 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self.main_layout.addWidget(self.log_text_edit, stretch=1)
 
         # --- Conectar Señales de Widgets UI ---
+        self.combo_area.currentIndexChanged.connect(self._actualizar_combo_aseguradoras)
         self.browse_button.clicked.connect(self._seleccionar_carpeta)
         self.start_button.clicked.connect(self._iniciar_automatizacion)
         self.report_button.clicked.connect(self._generar_reporte)
 
+        # --- Llamada inicial para poblar las aseguradoras
+        self._actualizar_combo_aseguradoras()
         # --- Estado inicial de botones ---
         self._actualizar_estado_botones(proceso_corriendo=False)
 
@@ -155,55 +162,73 @@ class VentanaPrincipal(QtWidgets.QWidget):
         # Se mostrará explícitamente al final de __init__ o en closeEvent
 
     def _crear_titulo(self):
-        """Crea el título grande CON ICONO."""
+        """Crea el título, el icono y los botones de control superiores."""
         self.titulo_layout = QtWidgets.QHBoxLayout()
-        self.titulo_layout.setContentsMargins(10, 5, 10, 15)  # Margen general
+        self.titulo_layout.setContentsMargins(10, 5, 10, 15)
 
-        # Etiqueta para el icono
         self.icono_titulo_label = QtWidgets.QLabel()
-        if self.app_icon and not self.app_icon.isNull():
-            pixmap = self.app_icon.pixmap(QtCore.QSize(32, 32))  # Ajusta tamaño
-            self.icono_titulo_label.setPixmap(pixmap)
+        if self.app_icon: self.icono_titulo_label.setPixmap(self.app_icon.pixmap(QtCore.QSize(32, 32)))
+        
+        self.titulo_texto_label = QtWidgets.QLabel(f"Automatizador SOAT v{APP_VERSION}")
+        self.titulo_texto_label.setFont(QtGui.QFont("Segoe UI", 16, QtGui.QFont.Weight.Bold))
+        
+        # <<< CAMBIO: Reemplazamos el QCheckBox por dos QPushButton >>>
+        # Botón para el modo segundo plano (headless)
+        self.headless_button = QtWidgets.QPushButton("🙈")
+        self.headless_button.setFixedSize(32, 32)
+        self.headless_button.setToolTip("Modo Segundo Plano Activado (el navegador no será visible). Haz clic para desactivar.")
+        self.headless_button.clicked.connect(self._toggle_headless_mode)
+        
+        # Botón para el tema oscuro
+        self.theme_button = QtWidgets.QPushButton("🌙")
+        self.theme_button.setFixedSize(32, 32)
+        self.theme_button.setToolTip("Activar/Desactivar Modo Oscuro")
+        self.theme_button.clicked.connect(self._toggle_dark_mode)
+
+        self.titulo_layout.addWidget(self.icono_titulo_label, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+        self.titulo_layout.addStretch(1)
+        self.titulo_layout.addWidget(self.titulo_texto_label, 0, QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.titulo_layout.addStretch(1)
+        self.titulo_layout.addWidget(self.headless_button, 0, QtCore.Qt.AlignmentFlag.AlignRight)
+        self.titulo_layout.addWidget(self.theme_button, 0, QtCore.Qt.AlignmentFlag.AlignRight)
+
+    @QtCore.Slot()
+    def _toggle_headless_mode(self):
+        """Invierte el estado del modo segundo plano y actualiza el botón."""
+        self.headless_activo = not self.headless_activo
+        if self.headless_activo:
+            self.headless_button.setText("🙈")
+            self.headless_button.setToolTip("Modo Segundo Plano Activado (el navegador no será visible). Haz clic para desactivar.")
         else:
-            # Si no hay icono, dejar un espacio vacío del mismo tamaño
-            self.icono_titulo_label.setFixedSize(32, 32)
+            self.headless_button.setText("👁️")
+            self.headless_button.setToolTip("Modo Segundo Plano Desactivado (podrás ver el navegador). Haz clic para activar.")
 
-        # Etiqueta para el texto
-        self.titulo_texto_label = QtWidgets.QLabel(
-            f"Automatizador SOAT Glosas v{APP_VERSION}"
-        )
-        font = QtGui.QFont("Segoe UI", 16, QtGui.QFont.Weight.Bold)  # Usar fuente común
-        self.titulo_texto_label.setFont(font)
+        # Dentro de la clase VentanaPrincipal
+    def _crear_grupo_seleccion_area(self):
+        """Crea el GroupBox para la selección de Área de Negocio (Glosas/Facturación)."""
+        self.grupo_seleccion_area = QtWidgets.QGroupBox("1. Seleccionar Área de Proceso")
+        layout = QtWidgets.QVBoxLayout(self.grupo_seleccion_area)
+        self.combo_area = QtWidgets.QComboBox()
+        self.combo_area.setMinimumHeight(28)
 
-        # Añadir icono, texto y stretch para centrar texto
-        self.titulo_layout.addWidget(
-            self.icono_titulo_label,
-            0,
-            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter,
-        )
-        self.titulo_layout.addStretch(1)  # Empuja el texto al centro
-        self.titulo_layout.addWidget(
-            self.titulo_texto_label, 0, QtCore.Qt.AlignmentFlag.AlignCenter
-        )
-        self.titulo_layout.addStretch(1)  # Empuja desde la derecha
+        # Poblar el ComboBox con las áreas de nuestra configuración
+        self.combo_area.addItem("Glosas", userData=AREA_GLOSAS_ID)
+        # Añade aquí otras áreas a medida que las implementes
+        self.combo_area.addItem("Facturación", userData="facturacion")
+
+        layout.addWidget(self.combo_area)
 
     def _crear_grupo_seleccion_aseguradora(self):
-        """Crea el GroupBox para selección de aseguradora."""
-        self.grupo_seleccion_aseguradora = QtWidgets.QGroupBox(
-            "1. Seleccionar Aseguradora"
-        )
+        """Crea el GroupBox para selección de aseguradora. (NACE VACÍO)"""
+        self.grupo_seleccion_aseguradora = QtWidgets.QGroupBox("2. Seleccionar Aseguradora")
         layout = QtWidgets.QVBoxLayout(self.grupo_seleccion_aseguradora)
         self.combo_aseguradora = QtWidgets.QComboBox()
         self.combo_aseguradora.setMinimumHeight(28)
-        for nombre, id_interno in ASEGURADORAS_CONFIG:
-            self.combo_aseguradora.addItem(nombre, userData=id_interno)
         layout.addWidget(self.combo_aseguradora)
 
     def _crear_grupo_seleccion_carpeta(self):
         """Crea el GroupBox para selección de carpeta."""
-        self.grupo_seleccion_carpeta = QtWidgets.QGroupBox(
-            "2. Seleccionar Carpeta Contenedora"
-        )
+        self.grupo_seleccion_carpeta = QtWidgets.QGroupBox("3. Seleccionar Carpeta Contenedora")
         layout = QtWidgets.QHBoxLayout(self.grupo_seleccion_carpeta)
         self.folder_line_edit = QtWidgets.QLineEdit("...")
         self.folder_line_edit.setReadOnly(True)
@@ -236,6 +261,21 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self.log_text_edit.setFont(log_font)
 
     # --- Slots (Respuesta a eventos UI) ---
+    # Dentro de la clase VentanaPrincipal, añade este nuevo método
+    @QtCore.Slot()
+    def _actualizar_combo_aseguradoras(self):
+        """Limpia y vuelve a poblar el ComboBox de aseguradoras basado en el área seleccionada."""
+        area_actual_id = self.combo_area.currentData()
+        self.combo_aseguradora.clear() # Limpiar la lista actual
+        
+        # Obtener la lista de aseguradoras para el área seleccionada desde las constantes
+        aseguradoras_disponibles = CONFIGURACION_AREAS.get(area_actual_id, [])
+        
+        for nombre, id_interno in aseguradoras_disponibles:
+            self.combo_aseguradora.addItem(nombre, userData=id_interno)
+            
+        # Actualizar el estado de los botones por si la lista quedó vacía
+        self._actualizar_estado_botones(proceso_corriendo=False)
 
     @QtCore.Slot()
     def _seleccionar_carpeta(self):
@@ -259,8 +299,10 @@ class VentanaPrincipal(QtWidgets.QWidget):
                 self, "Proceso Activo", "Ya hay un proceso en curso."
             )
             return
+        area_id = self.combo_area.currentData()
         aseguradora_id = self.combo_aseguradora.currentData()
         folder_path = self.folder_line_edit.text()
+        modo_headless = self.headless_activo
         if (
             not aseguradora_id
             or not folder_path
@@ -280,7 +322,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self._actualizar_estado_botones(proceso_corriendo=True)
 
         self.hilo_activo = QtCore.QThread(self)
-        self.worker_activo = TrabajadorAutomatizacion(aseguradora_id, folder_path)
+        self.worker_activo = TrabajadorAutomatizacion(area_id, aseguradora_id, folder_path, modo_headless)
         self.worker_activo.moveToThread(self.hilo_activo)
 
         # Conectar señales
@@ -372,44 +414,26 @@ class VentanaPrincipal(QtWidgets.QWidget):
         mostrar_popup = False
 
         # Procesar resultados según el tipo de worker
-        if (
-            worker_type is TrabajadorAutomatizacion and len(args) == 5
-        ):  # exitos, fallos, omit_rad, omit_dup, retry_fail
+        if (worker_type is TrabajadorAutomatizacion and len(args) == 5):
             exitos, fallos, omit_rad, omit_dup, retry_fail = args
-            log_msg = f"\nAutomatización completada. É:{exitos}, F:{fallos}, OR:{omit_rad}, OD:{omit_dup}, FR:{retry_fail}"
+            
+            # <<< CAMBIO 1: Mensaje para el log más limpio >>>
+            log_msg = f"\nTarea de automatización finalizada por el trabajador."
             self._actualizar_log(log_msg)
-            titulo_popup = "Automatización Finalizada"
-            mensaje_popup = f"Completado en:\n{os.path.basename(carpeta_finalizada)}\n\nÉxitos: {exitos}\nFallos: {fallos}\nOmitidas(RAD): {omit_rad}\nOmitidas(Dup): {omit_dup}\nFallo Reintento: {retry_fail}"
-            mostrar_popup = True
-        elif worker_type is TrabajadorReporte and len(args) == 2:  # exito, mensaje
-            exito, mensaje = args
-            log_msg = f"\nGeneración reporte: {mensaje}"
-            self._actualizar_log(log_msg)
-            if exito:
-                resp = QtWidgets.QMessageBox.information(
-                    self,
-                    "Reporte Generado",
-                    f"Éxito.\n{mensaje}\n\n¿Abrir carpeta?",
-                    QtWidgets.QMessageBox.StandardButton.Yes
-                    | QtWidgets.QMessageBox.StandardButton.No,
-                    QtWidgets.QMessageBox.StandardButton.Yes,
-                )
-                if (
-                    resp == QtWidgets.QMessageBox.StandardButton.Yes
-                    and carpeta_finalizada
-                ):
-                    self._abrir_carpeta(carpeta_finalizada)
-            else:
-                QtWidgets.QMessageBox.warning(
-                    self, "Error en Reporte", f"Fallo:\n{mensaje}"
-                )
-            mostrar_popup = False  # Ya mostramos específico
-        else:
-            self._actualizar_log(
-                f"\nWorker finalizado (tipo={worker_type}, args={args})."
-            )
-            mensaje_popup = "Tarea finalizada."
-            mostrar_popup = True
+
+            # <<< CAMBIO 2: Título y mensaje del pop-up mucho más claros y organizados >>>
+            titulo_popup = "Proceso de Automatización Finalizado"
+            mensaje_popup = f"""Se completó el proceso en la carpeta:
+{os.path.basename(carpeta_finalizada)}
+
+RESUMEN DE RESULTADOS:
+- Éxitos: {exitos}
+- Fallos: {fallos}
+- Omitidas (Ya tenían RAD): {omit_rad}
+- Omitidas (Factura duplicada): {omit_dup}
+- Fallos en Reintento: {retry_fail}
+"""
+        mostrar_popup = True
 
         # --- ACTUALIZAR BOTONES INMEDIATAMENTE ---
         # La limpieza real del hilo/worker ocurrirá cuando se emita 'finished'
@@ -421,6 +445,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
         # NO limpiar referencias aquí, esperar a _limpiar_referencias_post_hilo
 
         self.hilo_activo.quit()
+
     @QtCore.Slot(str)
     def _mostrar_error_critico(self, mensaje_error):
         """Maneja errores críticos."""
@@ -495,6 +520,20 @@ class VentanaPrincipal(QtWidgets.QWidget):
         if self.tray_icon:
             self.tray_icon.hide()
         QtWidgets.QApplication.instance().quit()
+
+    @QtCore.Slot()
+    def _toggle_dark_mode(self):
+        app = QtWidgets.QApplication.instance()
+        if not self.dark_theme_str: return # No hacer nada si no se cargó el tema
+        
+        self.dark_mode_activo = not self.dark_mode_activo # Invertir el estado
+
+        if self.dark_mode_activo:
+            app.setStyleSheet(self.dark_theme_str)
+            self.theme_button.setText("☀️")
+        else:
+            app.setStyleSheet("") # Vacío para volver al estilo por defecto del sistema
+            self.theme_button.setText("🌙")
 
     def _abrir_carpeta(self, folder_path):
         """Abre la carpeta especificada."""
