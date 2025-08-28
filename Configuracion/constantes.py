@@ -51,7 +51,8 @@ PREVISORA_XPATH_FINAL_CONFIRMATION_POPUP_CONTAINER = "//div[contains(@class, 'jc
 PREVISORA_XPATH_BOTON_NUEVA_RECLAMACION = "//div[contains(@class, 'jconfirm-open')]//button[contains(@class, 'btn-green') and normalize-space(text())='Generar una nueva reclamación']"
 
 PREVISORA_REDUCED_SLEEP_POST_UPLOAD = 0.1
-
+PREVISORA_NOMBRE_EN_PDF = "LA PREVISORA S.A."
+PREVISORA_VALUE_TIPO_CUENTA_FACTURACION = "1"
 # --- Constantes Mundial (Ejemplo Futuro) ---
 MUNDIAL_ID = "mundial"
 MUNDIAL_NOMBRE = "Seguros Mundial"
@@ -59,14 +60,78 @@ MUNDIAL_NOMBRE = "Seguros Mundial"
 # ... otras constantes para Mundial
 
 # --- Constantes AXA (Ejemplo Futuro) ---
-AXA_ID = "axa"
-AXA_NOMBRE = "AXA Colpatria"
-# AXA_LOGIN_URL = "..."
+AXASOAT_ID = "axa_soat"
+AXASOAT_NOMBRE = "AXA Colpatria SOAT"
+AXASOAT_LOGIN_URL = "https://axa.claimonline.com.co/"
+# Nombre a buscar en el PDF de la carta glosa para la validación universal
+AXASOAT_NOMBRE_EN_PDF = "AXA COLPATRIA SEGUROS S.A."
 
+# Datos de Login
+AXASOAT_TIPO_RECLAMANTE_LOGIN = "IPS"
+AXASOAT_DOCUMENTO_LOGIN = "8002098917"
+
+# Selectores 
+AXASOAT_SELECTOR_TIPO_RECLAMANTE = "select[selector='tipo_cuenta_select_selector']"
+AXASOAT_SELECTOR_DOCUMENTO = "input[selector='nit_selector']"
+AXASOAT_SELECTOR_BOTON_LOGIN = "button[selector='Login_button_selector']"
+
+# Selector para el botón "Aceptar" del pop-up/modal de notificación
+AXASOAT_SELECTOR_MODAL_ACEPTAR = "button:has-text('Aceptar')"
+
+# Selector clave para verificar que estamos en la página del formulario
+# Este es el input del NIT Ramo que mencionaste.
+AXASOAT_SELECTOR_FORMULARIO_VERIFY = "input[selector='nitramo_selector']"
+
+# Datos y selectores para el formulario de radicación
+AXASOAT_NIT_RAMO_FORM = "8600021846"
+AXASOAT_TIPO_CUENTA_FORM_RESPUESTA_OBJECION = "Respuesta a una objeción"
+
+AXASOAT_SELECTOR_NIT_RAMO = "input[selector='nitramo_selector']"
+AXASOAT_SELECTOR_TIPO_CUENTA = "select[selector='tipo_cuenta_select_selector']" # Coincide con el de login, pero es de otra página
+AXASOAT_SELECTOR_FECHA_ATENCION = "input[selector='fecha_atencion_date_selector']"
+
+AXASOAT_SELECTOR_NUMERO_FACTURA = "input[selector='numero_factura_input_selector']"
+AXASOAT_SELECTOR_MODAL_FACTURA_ACEPTAR = "button[selector='Aceptar_button_selector']"
+
+AXASOAT_SELECTOR_CHECKBOX_RIPS = "input[name='check_service']"
+
+# Datos y selector para el Correo Electrónico
+AXASOAT_CORREO_FORM = "radicacionglosa@asotrauma.com.co"
+AXASOAT_SELECTOR_CORREO = "input[selector='email_input_selector']"
+
+# Datos y selector para el Usuario que Registra
+AXASOAT_USUARIO_REGISTRA_FORM = "DIANA CAROLINA GIRALDO"
+AXASOAT_SELECTOR_USUARIO_REGISTRA = "input[name='usuario_registro']"
+AXASOAT_SELECTOR_INPUT_FILE = "input[name='otros']"
+
+AXASOAT_SELECTOR_SERVER_ERROR_H1 = "h1:has-text('502 Bad Gateway')"
+
+# Selector para el "100%" que confirma la subida del archivo
+AXASOAT_SELECTOR_UPLOAD_COMPLETE = "span:has-text('100%')"
+
+# Selector para el botón "Enviar"
+AXASOAT_SELECTOR_BOTON_ENVIAR = "button[selector='Enviar_button_selector']"
+AXASOAT_SELECTOR_MODAL_POST_UPLOAD_ACEPTAR = "div:has-text('¿Desea Continuar?') >> button[selector='Aceptar_button_selector']"
+
+# Selector para el párrafo del modal final que contiene el radicado
+AXASOAT_SELECTOR_MODAL_FINAL_TEXTO = "p:has-text('reclamacion registrada correctamente')"
+
+# Selector para el botón final de "Aceptar"
+AXASOAT_SELECTOR_MODAL_FINAL_ACEPTAR = "div.bg-neutral-50 button[selector='Aceptar_button_selector']"
+
+EMAIL_IMAP_SERVER = "imap.gmail.com"  # Servidor IMAP (ej. para Gmail)
+EMAIL_USER_ADDRESS = "radicacionglosa@asotrauma.com.co" # El correo donde llegan los soportes
+# Para Gmail, usa una "Contraseña de aplicación", no tu contraseña normal.
+# Búscalo en la configuración de seguridad de tu cuenta de Google.
+EMAIL_APP_PASSWORD = "yuzy hkzu rnsi vggx"
+# Remitente específico de los correos de radicación de AXA
+AXASOAT_EMAIL_SENDER = "notificaciones@claimonline.com.co"
 # --- IDs INTERNOS PARA LAS ÁREAS ---
 AREA_GLOSAS_ID = "glosas"
 AREA_FACTURACION_ID = "facturacion"
-
+EMAIL_PROCESSED_FOLDER = "Procesados" 
+EMAIL_SEARCH_RETRIES = 60    # Número de veces que se reintentará
+EMAIL_SEARCH_DELAY_SECONDS = 15 
 # --- CONFIGURACIÓN CENTRALIZADA POR ÁREA ---
 # Esto ahora es un diccionario. La clave es el ID del área.
 # El valor es la lista de aseguradoras disponibles para esa área.
@@ -74,10 +139,18 @@ CONFIGURACION_AREAS = {
     AREA_GLOSAS_ID: [
         (PREVISORA_NOMBRE, PREVISORA_ID),
         (MUNDIAL_NOMBRE, MUNDIAL_ID),
-        (AXA_NOMBRE, AXA_ID),
+        (AXASOAT_NOMBRE, AXASOAT_ID),
     ],
     AREA_FACTURACION_ID: [
         # Quizás facturación solo está disponible para Previsora por ahora
         (PREVISORA_NOMBRE, PREVISORA_ID),
     ]
 }
+
+# --- Configuración de Procesamiento de Carpetas ---
+# Palabras clave en nombres de carpetas que causarán que se omitan. No distingue mayúsculas/minúsculas.
+PALABRAS_EXCLUSION_CARPETAS = [
+    "NO RADICAR",
+    "CARTERA",
+    # "CERO EN CARTERA" se cubre con "CARTERA"
+]

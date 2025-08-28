@@ -119,14 +119,19 @@ class TrabajadorAutomatizacion(QtCore.QObject):
                     subfolder_name = subfolder_path.name
                     self.progreso_update.emit(f"\n>>> Procesando Carpeta {i+1}/{len(subcarpetas)}: '{subfolder_name}'")
 
-                    estado, radicado, log_carpeta = funcion_procesar_carpeta(page, subfolder_path, subfolder_name)
+                    estado, radicado, codigo_factura_devuelto, log_carpeta = funcion_procesar_carpeta(page, subfolder_path, subfolder_name)
                     self.progreso_update.emit(log_carpeta)
 
                     if estado == ESTADO_EXITO:
                         exitos += 1
-                        from Core.utilidades import encontrar_y_validar_pdfs
-                        factura_final, _, _ = encontrar_y_validar_pdfs(subfolder_path, subfolder_name)
-                        resultado = {"subcarpeta": subfolder_name, "factura": factura_final or "N/A", "radicado": radicado or "No Extraído", "rad_pdf_path": str(subfolder_path / "RAD.pdf"),}
+
+                        resultado = {
+                            "subcarpeta": subfolder_name,
+                            "factura": codigo_factura_devuelto or "N/A",
+                            "radicado": radicado or "No Extraído",
+                            "rad_pdf_path": str(subfolder_path / "RAD.pdf"),
+                        }
+
                         self.resultados_exitosos.append(resultado)
                     elif estado == ESTADO_FALLO: fallos += 1
                     elif estado == ESTADO_OMITIDO_RADICADO: omit_rad += 1

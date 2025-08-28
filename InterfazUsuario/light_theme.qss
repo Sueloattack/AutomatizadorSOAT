@@ -1,0 +1,49 @@
+/* Archivo: light_theme.qss (Versión espejo del tema oscuro) */
+QWidget {
+    background-color: #f0f0f0; /* Fondo claro */
+    color: #2b2b2b; /* Texto oscuro */
+    border: 0px;
+}
+QGroupBox {
+    font-weight: bold;
+    border: 1px solid #cccccc; /* Borde gris claro */
+    border-radius: 5px;
+    margin-top: 1ex;
+    padding: 10px; /* <- Espaciado idéntico al tema oscuro */
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 3px;
+    background-color: #f0f0f0; /* <- Coincide con el fondo de la ventana */
+}
+QPushButton {
+    background-color: #e1e1e1; /* Botón gris claro */
+    border: 1px solid #cccccc; /* Borde gris claro */
+    color: #2b2b2b; /* Texto oscuro */
+    padding: 5px;
+    border-radius: 5px;
+}
+QPushButton:hover {
+    background-color: #d1d1d1; /* Un poco más oscuro al pasar el ratón */
+}
+QPushButton:pressed {
+    background-color: #c1c1c1; /* Más oscuro al presionar */
+}
+QPushButton:disabled {
+    background-color: #eeeeee; /* Deshabilitado claro */
+    color: #aaaaaa; /* Texto deshabilitado */
+}
+QLineEdit, QTextEdit, QComboBox {
+    background-color: #ffffff; /* Fondo blanco para campos de texto */
+    border: 1px solid #cccccc; /* Borde gris claro */
+    color: #2b2b2b; /* Texto oscuro */
+    padding: 4px;
+    border-radius: 4px;
+}
+QComboBox::drop-down {
+    border: none;
+}
+QComboBox::down-arrow {
+    image: url(none);
+}

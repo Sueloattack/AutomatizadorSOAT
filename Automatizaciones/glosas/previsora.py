@@ -4,6 +4,7 @@ import traceback
 from pathlib import Path
 import re
 
+from Core.utilidades import encontrar_y_validar_pdfs
 from playwright.sync_api import Page, expect, TimeoutError as PlaywrightTimeoutError
 try:
     from PIL import Image
@@ -166,39 +167,53 @@ def guardar_confirmacion_previsora(page: Page, output_folder: Path) -> tuple[str
         logs.append(error_msg); traceback.print_exc(); page.screenshot(path="error_confirmacion.png")
         return None, None, "\n".join(logs)
 
-# --- La función procesar_carpeta_previsora NO CAMBIA ---
-def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> tuple[str, str | None, str]:
-    """Función orquestadora principal para una sola carpeta."""
+def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> tuple[str, str | None, str | None, str]:
+    """Orquestador principal para Previsora, con verificaciones previas robustas."""
     logs = [f"--- Iniciando Playwright/Previsora para: '{subfolder_name}' ---"]
     try:
-        from Core.utilidades import encontrar_y_validar_pdfs
-    except ImportError:
-        return ESTADO_FALLO, None, "ERROR CRÍTICO: No se pudo importar 'encontrar_y_validar_pdfs'"
+        # --- BLOQUE DE VERIFICACIONES PREVIAS (PRE-FLIGHT CHECKS) ---
 
-    if (subfolder_path / "RAD.pdf").is_file():
-        return ESTADO_OMITIDO_RADICADO, None, "  OMITIENDO: Ya existe RAD.pdf."
-    
-    codigo_factura, pdf_path, pdf_log = encontrar_y_validar_pdfs(subfolder_path, subfolder_name)
-    logs.append(pdf_log)
-    if not (codigo_factura and pdf_path):
-        return ESTADO_FALLO, None, "\n".join(logs)
-        
-    estado_llenado, log_llenado = llenar_formulario_previsora(page, codigo_factura)
-    logs.append(log_llenado)
-    if estado_llenado != ESTADO_EXITO:
-        return estado_llenado, None, "\n".join(logs)
-    
-    estado_subida, log_subida = subir_y_enviar_previsora(page, pdf_path)
-    logs.append(log_subida)
-    if estado_subida != ESTADO_EXITO:
-        return estado_subida, None, "\n".join(logs)
-        
-    pdf_final_path, radicado_final, log_confirmacion = guardar_confirmacion_previsora(page, subfolder_path)
-    logs.append(log_confirmacion)
+        # 1. Verificar si el nombre de la carpeta contiene palabras de exclusión.
+        nombre_mayus = subfolder_name.upper()
+        if any(palabra in nombre_mayus for palabra in PALABRAS_EXCLUSION_CARPETAS):
+            msg = f"OMITIENDO: El nombre de la carpeta contiene una palabra de exclusión."
+            logs.append(msg)
+            return ESTADO_OMITIDO_RADICADO, None, None, "\n".join(logs)
 
-    if pdf_final_path:
-        logs.append(f"--- ÉXITO: Carpeta '{subfolder_name}' procesada. Radicado: {radicado_final} ---")
-        return ESTADO_EXITO, radicado_final, "\n".join(logs)
-    else:
-        logs.append(f"--- FALLO: Carpeta '{subfolder_name}' falló en el último paso. ---")
-        return ESTADO_FALLO, None, "\n".join(logs)
+        # 2. Verificar si ya existe un RAD.pdf (prueba de radicación para Previsora).
+        if (subfolder_path / "RAD.pdf").is_file():
+            msg = "OMITIENDO: Ya existe un archivo RAD.pdf en esta carpeta."
+            logs.append(msg)
+            return ESTADO_OMITIDO_RADICADO, None, None, "\n".join(logs)
+
+        # --- FIN DE VERIFICACIONES ---
+        
+        codigo_factura, pdf_path, pdf_log = encontrar_y_validar_pdfs(
+            subfolder_path, subfolder_name, PREVISORA_NOMBRE_EN_PDF
+        )
+        logs.append(pdf_log)
+        if not (codigo_factura and pdf_path):
+            return ESTADO_FALLO, None, None, "\n".join(logs)
+        
+        estado_llenado, log_llenado = llenar_formulario_previsora(page, codigo_factura)
+        logs.append(log_llenado)
+        if estado_llenado != ESTADO_EXITO:
+            return estado_llenado, None, codigo_factura, "\n".join(logs)
+
+        estado_subida, log_subida = subir_y_enviar_previsora(page, pdf_path)
+        logs.append(log_subida)
+        if estado_subida != ESTADO_EXITO:
+            return estado_subida, None, codigo_factura, "\n".join(logs)
+            
+        pdf_final_path, radicado_final, log_confirmacion = guardar_confirmacion_previsora(page, subfolder_path)
+        logs.append(log_confirmacion)
+
+        if pdf_final_path:
+            return ESTADO_EXITO, radicado_final, codigo_factura, "\n".join(logs)
+        else:
+            return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
+
+    except Exception as e:
+        error_msg = f"ERROR CRÍTICO en Previsora/procesar_carpeta para '{subfolder_name}': {e}"
+        traceback.print_exc()
+        return ESTADO_FALLO, None, None, "\n".join(logs + [error_msg])

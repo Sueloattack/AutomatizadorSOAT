@@ -22,18 +22,25 @@ class VentanaPrincipal(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         # <<< CAMBIO: Atributos para controlar el estado de los toggles >>>
-        self.dark_mode_activo = False
-        self.headless_activo = True  # Empezamos con el modo 2do plano ACTIVADO por defecto
+        self.headless_activo = True
         self.dark_theme_str = ""
+        self.light_theme_str = ""
+        self.theme_mode = 'light' 
         
-        # <<< CAMBIO: Usar resource_path para encontrar el tema >>>
         try:
-            # Construimos la ruta correcta al archivo QSS
-            theme_path = resource_path("InterfazUsuario/dark_theme.qss")
-            with open(theme_path, "r") as f:
+            dark_theme_path = resource_path("InterfazUsuario/dark_theme.qss")
+            with open(dark_theme_path, "r") as f:
                 self.dark_theme_str = f.read()
+            
+            light_theme_path = resource_path("InterfazUsuario/light_theme.qss")
+            with open(light_theme_path, "r") as f:
+                self.light_theme_str = f.read()
+
+            # Aplicar el tema claro por defecto al iniciar la app
+            self.setStyleSheet(self.light_theme_str)
+            
         except FileNotFoundError:
-            print(f"ADVERTENCIA: No se encontró 'dark_theme.qss'. El modo oscuro no funcionará.")
+            print("ADVERTENCIA: No se encontró 'dark_theme.qss' o 'light_theme.qss'.")
         
         # El resto del __init__ es casi idéntico y correcto
         self.hilo_activo = None
@@ -42,7 +49,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
 
         # --- Configuración Ventana ---
         self.setWindowTitle(f"Automatizador SOAT Glosas v{APP_VERSION}")
-        self.setGeometry(100, 100, 700, 600)
+        self.setGeometry(100, 100, 700, 700)
 
         # --- Cargar Icono ---
         self.ruta_icono_png = "Recursos/Icons/pingu.png"  # Ruta al PNG
@@ -182,8 +189,8 @@ class VentanaPrincipal(QtWidgets.QWidget):
         # Botón para el tema oscuro
         self.theme_button = QtWidgets.QPushButton("🌙")
         self.theme_button.setFixedSize(32, 32)
-        self.theme_button.setToolTip("Activar/Desactivar Modo Oscuro")
-        self.theme_button.clicked.connect(self._toggle_dark_mode)
+        self.theme_button.setToolTip("Cambiar a Modo Oscuro")
+        self.theme_button.clicked.connect(self._toggle_theme)
 
         self.titulo_layout.addWidget(self.icono_titulo_label, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
         self.titulo_layout.addStretch(1)
@@ -474,15 +481,27 @@ RESUMEN DE RESULTADOS:
         habilitar_controles = not proceso_corriendo
         folder_path_str = self.folder_line_edit.text()
         es_carpeta_valida = os.path.isdir(folder_path_str) and folder_path_str != "..."
+
+        # Habilitar o deshabilitar los botones de control de proceso
         self.start_button.setEnabled(habilitar_controles and es_carpeta_valida)
+        
         reporte_habilitado = False
         if habilitar_controles and es_carpeta_valida:
             ruta_json = Path(folder_path_str) / "resultados_automatizacion.json"
             if ruta_json.is_file():
                 reporte_habilitado = True
+        
         self.report_button.setEnabled(reporte_habilitado)
+        
+        # Habilitar o deshabilitar los widgets de selección
+        self.combo_area.setEnabled(habilitar_controles) # No olvidar el combo de área
         self.combo_aseguradora.setEnabled(habilitar_controles)
         self.browse_button.setEnabled(habilitar_controles)
+        
+        # --- LA SOLUCIÓN ESTÁ AQUÍ ---
+        # Desactivamos los botones de configuración (headless y tema) mientras corre un proceso
+        self.headless_button.setEnabled(habilitar_controles)
+        self.theme_button.setEnabled(habilitar_controles)
 
     # --- Métodos para bandeja y cierre ---
     @QtCore.Slot(QtWidgets.QSystemTrayIcon.ActivationReason)
@@ -522,18 +541,20 @@ RESUMEN DE RESULTADOS:
         QtWidgets.QApplication.instance().quit()
 
     @QtCore.Slot()
-    def _toggle_dark_mode(self):
-        app = QtWidgets.QApplication.instance()
-        if not self.dark_theme_str: return # No hacer nada si no se cargó el tema
-        
-        self.dark_mode_activo = not self.dark_mode_activo # Invertir el estado
-
-        if self.dark_mode_activo:
-            app.setStyleSheet(self.dark_theme_str)
+    def _toggle_theme(self):
+        """Cambia entre el tema claro y oscuro."""
+        if self.theme_mode == 'light':
+            # Cambiar a oscuro
+            self.setStyleSheet(self.dark_theme_str)
             self.theme_button.setText("☀️")
+            self.theme_button.setToolTip("Cambiar a Modo Claro")
+            self.theme_mode = 'dark'
         else:
-            app.setStyleSheet("") # Vacío para volver al estilo por defecto del sistema
+            # Cambiar a claro
+            self.setStyleSheet(self.light_theme_str)
             self.theme_button.setText("🌙")
+            self.theme_button.setToolTip("Cambiar a Modo Oscuro")
+            self.theme_mode = 'light'
 
     def _abrir_carpeta(self, folder_path):
         """Abre la carpeta especificada."""
