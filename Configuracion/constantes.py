@@ -41,6 +41,7 @@ PREVISORA_ID_RAMO_FORM = "sl-ramo"
 PREVISORA_ID_AMPAROS_FORM = "sl-tipo-amparo"
 PREVISORA_ID_TIPO_CUENTA_FORM = "sl-tipo-cuenta"
 PREVISORA_XPATH_POPUP_FACTURA_CONTINUAR = "//div[contains(@class, 'jconfirm') and contains(@class, 'jconfirm-open')]//button[contains(@class, 'btn-green') and normalize-space(text())='CONTINUAR']"
+PREVISORA_XPATH_POPUP_FACTURA_CONTINUAR_GUARDAR = "//div[contains(@class, 'jconfirm-buttons')]//button[contains(text(), 'Continuar y Guardar')]"
 
 PREVISORA_ID_INPUT_FILE_FORM = "str_bytes_archivo_otros"
 PREVISORA_ID_BOTON_ENVIAR_FORM = "btn-enviar-datos2y3"
@@ -117,7 +118,7 @@ AXASOAT_SELECTOR_MODAL_POST_UPLOAD_ACEPTAR = "div:has-text('¿Desea Continuar?')
 AXASOAT_SELECTOR_MODAL_FINAL_TEXTO = "p:has-text('reclamacion registrada correctamente')"
 
 # Selector para el botón final de "Aceptar"
-AXASOAT_SELECTOR_MODAL_FINAL_ACEPTAR = "div.bg-neutral-50 button[selector='Aceptar_button_selector']"
+AXASOAT_SELECTOR_MODAL_FINAL_ACEPTAR = "div:has-text('reclamacion registrada correctamente') >> button[selector='Aceptar_button_selector']"
 
 EMAIL_IMAP_SERVER = "imap.gmail.com"  # Servidor IMAP (ej. para Gmail)
 EMAIL_USER_ADDRESS = "radicacionglosa@asotrauma.com.co" # El correo donde llegan los soportes
@@ -146,6 +147,10 @@ CONFIGURACION_AREAS = {
         (PREVISORA_NOMBRE, PREVISORA_ID),
     ]
 }
+
+ASEGURADORAS_CON_EMAIL_LISTENER = [
+    AXASOAT_ID,
+]
 
 # --- Configuración de Procesamiento de Carpetas ---
 # Palabras clave en nombres de carpetas que causarán que se omitan. No distingue mayúsculas/minúsculas.

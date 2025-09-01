@@ -9,7 +9,7 @@ from playwright.sync_api import Page, expect, TimeoutError as PlaywrightTimeoutE
 
 try:
     from Configuracion.constantes import *
-    from Core.utilidades import encontrar_y_validar_pdfs, buscar_y_guardar_radicado_email
+    from Core.utilidades import encontrar_y_validar_pdfs
 except ImportError as e:
     raise ImportError(f"ERROR CRITICO: No se pudieron importar constantes: {e}")
 
@@ -169,41 +169,63 @@ def subir_archivo_respuesta(page: Page, pdf_path: Path) -> tuple[bool, str]:
         return False, "\n".join(logs)
 
 def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> tuple[str, str | None, str | None, str]:
-    """Orquestador principal para AXA, con verificaciones previas e integración de email."""
-    logs = [f"--- Iniciando procesamiento para AXA | Carpeta: '{subfolder_name}' ---"]
+    """
+    Orquestador web para AXA: filtra, valida, llena formulario y lo envía.
+    NO se encarga de la lógica de email; solo devuelve el radicado para la cola.
+    """
+    logs = [f"--- Iniciando procesamiento WEB para AXA | Carpeta: '{subfolder_name}' ---"]
     try:
-        # 1. Verificaciones Previas
-        if any(p in subfolder_name.upper() for p in PALABRAS_EXCLUSION_CARPETAS) or \
-           any(f.name.lower().endswith("-recibido.pdf") for f in subfolder_path.iterdir() if f.is_file()):
-            logs.append("OMITIENDO: Carpeta excluida por nombre o ya radicada.")
+        # --- NUEVO BLOQUE (MENSAJES ESPECÍFICOS) ---
+        # 1. Verificar por nombre de carpeta
+        palabras_encontradas = [p for p in PALABRAS_EXCLUSION_CARPETAS if p in subfolder_name.upper()]
+        if palabras_encontradas:
+            # Si encuentra "NO RADICAR" y "CARTERA", las unirá
+            motivo = ", ".join(palabras_encontradas)
+            msg = f"OMITIENDO: El nombre contiene la(s) palabra(s) de exclusión: '{motivo}'."
+            logs.append(msg)
+            return ESTADO_OMITIDO_RADICADO, None, None, "\n".join(logs)
+
+        # 2. Verificar si ya está radicada
+        if any(f.name.lower().endswith("-recibido.pdf") for f in subfolder_path.iterdir() if f.is_file()):
+            msg = "OMITIENDO: Ya existe un archivo de radicado '*-recibido.pdf'."
+            logs.append(msg)
             return ESTADO_OMITIDO_RADICADO, None, None, "\n".join(logs)
 
         # 2. Búsqueda y preparación de archivos
         codigo_factura, pdf_path, pdf_log = encontrar_y_validar_pdfs(subfolder_path, subfolder_name, AXASOAT_NOMBRE_EN_PDF)
         logs.append(pdf_log)
-        if not (codigo_factura and pdf_path): return ESTADO_FALLO, None, None, "\n".join(logs)
-        path_pdf_final, rename_log = asegurar_extension_pdf_minuscula(pdf_path); logs.append(rename_log)
+        if not (codigo_factura and pdf_path):
+            return ESTADO_FALLO, None, None, "\n".join(logs)
+        
+        path_pdf_final, rename_log = asegurar_extension_pdf_minuscula(pdf_path)
+        logs.append(rename_log)
 
         # 3. Interacción Web
-        form_ok, form_log = llenar_formulario(page, codigo_factura); logs.append(form_log)
-        if not form_ok: return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
+        form_ok, form_log = llenar_formulario(page, codigo_factura)
+        logs.append(form_log)
+        if not form_ok:
+            return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
 
-        upload_ok, upload_log = subir_archivo_respuesta(page, path_pdf_final); logs.append(upload_log)
-        if not upload_ok: return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
+        upload_ok, upload_log = subir_archivo_respuesta(page, path_pdf_final)
+        logs.append(upload_log)
+        if not upload_ok:
+            return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
             
-        radicado_final, final_log = enviar_y_finalizar_radicado(page); logs.append(final_log)
-        if not radicado_final: return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
+        radicado_final, final_log = enviar_y_finalizar_radicado(page)
+        logs.append(final_log)
+        if not radicado_final:
+            return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
             
-        # 4. Integración Externa (Email)
-        logs.append(f"Proceso web OK (Radicado: {radicado_final}). Buscando email...")
-        email_ok, email_log = buscar_y_guardar_radicado_email(radicado_final, subfolder_path)
-        logs.append(email_log)
-        if not email_ok: logs.append(f"ADVERTENCIA: No se pudo obtener el PDF del email.")
-
+        logs.append(f"--- Proceso web para '{subfolder_name}' finalizado. Radicado Web: {radicado_final} ---")
+        
+        # EL PASO DE EMAIL HA SIDO ELIMINADO DE AQUÍ.
+        # Simplemente devolvemos el éxito.
+        
         return ESTADO_EXITO, radicado_final, codigo_factura, "\n".join(logs)
 
     except Exception as e:
-        error_msg = f"ERROR CRÍTICO en AXA/procesar_carpeta: {e}"; traceback.print_exc()
+        error_msg = f"ERROR CRÍTICO en AXA/procesar_carpeta: {e}"
+        traceback.print_exc()
         return ESTADO_FALLO, None, None, "\n".join(logs + [error_msg])
 
 def enviar_y_finalizar_radicado(page: Page) -> tuple[str | None, str]:

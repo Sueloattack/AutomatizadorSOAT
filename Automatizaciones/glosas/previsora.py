@@ -103,7 +103,7 @@ def llenar_formulario_previsora(page: Page, codigo_factura: str) -> tuple[str, s
 
 # --- ESTA FUNCIÓN HA SIDO MODIFICADA ---
 def subir_y_enviar_previsora(page: Page, pdf_path: Path) -> tuple[str, str]:
-    """Carga el PDF y maneja SOLAMENTE los pop-ups INTERMEDIOS."""
+    """Carga el PDF y maneja el primer pop-up de confirmación."""
     logs = [f"  Subiendo archivo: {pdf_path.name}..."]
     try:
         page.locator(f"#{PREVISORA_ID_INPUT_FILE_FORM}").set_input_files(pdf_path)
@@ -112,34 +112,71 @@ def subir_y_enviar_previsora(page: Page, pdf_path: Path) -> tuple[str, str]:
         page.locator(f"#{PREVISORA_ID_BOTON_ENVIAR_FORM}").click()
         logs.append("    - Clic en 'Enviar'.")
 
-        page.locator(PREVISORA_XPATH_POPUP_ENVIO_SI_CONTINUAR).click(timeout=15000)
+        # Clic en el primer pop-up sin esperar a que la página navegue
+        page.locator(PREVISORA_XPATH_POPUP_ENVIO_SI_CONTINUAR).click(timeout=15000, no_wait_after=True)
         logs.append("    - Pop-up 'Sí, continuar' confirmado.")
         
-        # *** ELIMINADO ***
-        # El clic en "Continuar y Guardar" ahora lo hará la siguiente función.
-        # Esto asegura que no nos quedemos esperando aquí por una navegación que no ocurrirá.
-
+        # EL PASO "CONTINUAR Y GUARDAR" SE HACE EN LA SIGUIENTE FUNCIÓN
+        
         return ESTADO_EXITO, "\n".join(logs)
     except Exception as e:
         error_msg = f"ERROR inesperado al subir o enviar: {e}"
-        logs.append(error_msg); traceback.print_exc(); page.screenshot(path="error_subida_archivo.png")
+        page.screenshot(path=f"error_screenshot_subida_{pdf_path.stem}_{time.strftime('%H%M%S')}.png")
+        logs.append(error_msg); traceback.print_exc()
         return ESTADO_FALLO, "\n".join(logs)
 
 # --- ESTA FUNCIÓN HA SIDO MODIFICADA ---
 def guardar_confirmacion_previsora(page: Page, output_folder: Path) -> tuple[str | None, str | None, str]:
-    """Hace el clic final, espera el pop-up, extrae datos, guarda PDF y limpia la pantalla."""
-    logs = ["  Esperando pop-up de confirmación final..."]
+    """
+    Maneja el guardado final de forma adaptativa, reconociendo si el sitio
+    presenta el pop-up intermedio "Continuar y Guardar" o salta directamente
+    al pop-up final de "Registro Generado".
+    """
+    logs = ["  Manejando fase de confirmación final (lógica adaptativa)..."]
     try:
-        # *** AÑADIDO: Ahora esta función hace el clic final ***
-        logs.append("    - Haciendo clic en 'Continuar y guardar'...")
-        # El no_wait_after=True le dice a Playwright: "haz clic y no esperes a que la página navegue".
-        page.locator(PREVISORA_XPATH_POPUP_CONTINUAR_GUARDAR).click(no_wait_after=True)
-        logs.append("    - Clic realizado. Ahora esperando el pop-up de 'Registro Generado'.")
+        # 1. Esperar a que la página se estabilice (sin cambios)
+        logs.append("    - Esperando a que la página se estabilice...")
+        page.wait_for_load_state("load", timeout=30000)
+        logs.append("    - Página estabilizada.")
 
-        popup_final = page.locator(PREVISORA_XPATH_FINAL_CONFIRMATION_POPUP_CONTAINER)
-        expect(popup_final).to_be_visible(timeout=90000)
-        logs.append("    - Pop-up final detectado.")
+        # --- LÓGICA ADAPTATIVA: BUSCAR QUÉ CAMINO TOMÓ LA WEB ---
+        # Definimos los localizadores para ambos posibles pop-ups
+        popup_intermedio_boton = page.locator(PREVISORA_XPATH_POPUP_CONTINUAR_GUARDAR)
+        popup_final_confirmacion = page.locator(PREVISORA_XPATH_FINAL_CONFIRMATION_POPUP_CONTAINER)
         
+        logs.append("    - Detectando siguiente paso del flujo (Intermedio o Final)...")
+        
+        # Esperamos un máximo de 3 minutos a que ALGUNO de los dos aparezca.
+        # Esto lo logramos con un bucle de espera manual.
+        popup_final = None # Definimos la variable fuera del bucle
+        found_path = False
+        for _ in range(180): # Intentar cada segundo por 3 minutos (180 segundos)
+            # Primero, revisar si ya tenemos el resultado final.
+            if popup_final_confirmacion.is_visible():
+                logs.append("    -> DETECTADO: El pop-up final 'Registro Generado' apareció directamente.")
+                popup_final = popup_final_confirmacion
+                found_path = True
+                break
+            
+            # Si no, revisar si tenemos el paso intermedio.
+            if popup_intermedio_boton.is_visible():
+                logs.append("    -> DETECTADO: El pop-up intermedio 'Continuar y Guardar' está visible.")
+                popup_intermedio_boton.click(no_wait_after=True)
+                logs.append("    -> Clic en 'Continuar y Guardar'. Ahora esperando el pop-up final...")
+                # Ahora que hicimos clic, podemos esperar con `expect` de forma segura
+                expect(popup_final_confirmacion).to_be_visible(timeout=180000)
+                popup_final = popup_final_confirmacion
+                found_path = True
+                break
+
+            page.wait_for_timeout(1000) # Esperar 1 segundo antes de volver a comprobar
+
+        if not found_path or not popup_final:
+            raise Exception("Timeout: No se detectó ni el pop-up intermedio ni el final después de 3 minutos.")
+        
+        # --- Si llegamos aquí, 'popup_final' tiene el elemento correcto ---
+        
+        # El resto del código para extraer y guardar la evidencia no cambia.
         texto_popup = popup_final.inner_text()
         radicado_match = re.search(r"Tu codigo es:\s*'(\d+)'", texto_popup, re.IGNORECASE)
         radicado_extraido = radicado_match.group(1) if radicado_match else "Extracción Fallida"
@@ -150,70 +187,94 @@ def guardar_confirmacion_previsora(page: Page, output_folder: Path) -> tuple[str
         rad_pdf_path = output_folder / "RAD.pdf"
         
         popup_final.screenshot(path=temp_png_path)
-        
-        with Image.open(temp_png_path) as img:
-            img.convert("RGB").save(rad_pdf_path)
+        with Image.open(temp_png_path) as img: img.convert("RGB").save(rad_pdf_path)
         temp_png_path.unlink()
         logs.append(f"    - Confirmación guardada como {rad_pdf_path.name}")
         
-        # Este paso es CRÍTICO para limpiar la pantalla para la siguiente iteración
         page.locator(PREVISORA_XPATH_BOTON_NUEVA_RECLAMACION).click()
         expect(page.locator(f"#{PREVISORA_ID_FACTURA_FORM}")).to_be_enabled(timeout=20000)
-        logs.append("    - Clic en 'Nueva Reclamación'. Pantalla limpia para la siguiente.")
+        logs.append("    - Clic en 'Nueva Reclamación'. Pantalla limpia.")
         
         return str(rad_pdf_path), radicado_extraido, "\n".join(logs)
+
     except Exception as e:
         error_msg = f"ERROR inesperado en la confirmación final: {e}"
-        logs.append(error_msg); traceback.print_exc(); page.screenshot(path="error_confirmacion.png")
+        page.screenshot(path=f"error_screenshot_confirmacion_{output_folder.name}_{time.strftime('%H%M%S')}.png")
+        logs.append(error_msg); traceback.print_exc()
         return None, None, "\n".join(logs)
 
+# --- FUNCIÓN DE AYUDA PARA MANEJAR EL LLENADO CON REINTENTO ---
+def _intentar_llenar_formulario(page: Page, codigo_factura: str) -> tuple[str, str]:
+    """
+    Intenta llenar el formulario. Si falla por un timeout (el "dropdown tímido"),
+    recarga la página y lo intenta una vez más. Evita generar screenshots
+    para este fallo común y esperado.
+    """
+    logs = []
+    MAX_ATTEMPTS = 3
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            # Esta es la función que SÍ puede fallar
+            return llenar_formulario_previsora(page, codigo_factura)
+        except PlaywrightTimeoutError as e:
+            # ¡Capturamos SOLO el TimeoutError!
+            logs.append(f"ADVERTENCIA: Falló el llenado en intento #{attempt} (Timeout). Razón: {str(e).splitlines()[0]}")
+            if attempt < MAX_ATTEMPTS:
+                logs.append("  -> Recargando la página para reintentar...")
+                page.reload(wait_until="domcontentloaded", timeout=45000)
+                page.wait_for_timeout(2000)
+            else:
+                logs.append("ERROR: Se alcanzó el número máximo de reintentos para el llenado.")
+                # Forzar la creación de un screenshot SOLO en el último fallo
+                page.screenshot(path=f"error_final_formulario_{codigo_factura}_{time.strftime('%H%M%S')}.png")
+                return ESTADO_FALLO, "\n".join(logs)
+    
+    # Esto no debería alcanzarse, pero es una salvaguarda
+    return ESTADO_FALLO, "\n".join(logs)
+
 def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> tuple[str, str | None, str | None, str]:
-    """Orquestador principal para Previsora, con verificaciones previas robustas."""
+    """Orquestador para Previsora, que ahora delega la lógica de reintento de llenado."""
     logs = [f"--- Iniciando Playwright/Previsora para: '{subfolder_name}' ---"]
+    
+    # Verificaciones previas
+    palabras_encontradas = [p for p in PALABRAS_EXCLUSION_CARPETAS if p in subfolder_name.upper()]
+    if palabras_encontradas:
+        return ESTADO_OMITIDO_RADICADO, None, None, f"OMITIENDO: Nombre de carpeta contiene exclusión: '{', '.join(palabras_encontradas)}'."
+    if (subfolder_path / "RAD.pdf").is_file():
+        return ESTADO_OMITIDO_RADICADO, None, None, "OMITIENDO: Ya existe RAD.pdf."
+
+    codigo_factura, pdf_path, pdf_log = encontrar_y_validar_pdfs(subfolder_path, subfolder_name, PREVISORA_NOMBRE_EN_PDF)
+    logs.append(pdf_log)
+    if not (codigo_factura and pdf_path):
+        return ESTADO_FALLO, None, None, "\n".join(logs)
+    
+    # --- PROCESO WEB PRINCIPAL ---
+    # Delegamos el llenado a la función de reintento inteligente.
+    logs.append("\n--- PASO 1: Llenado de Formulario ---")
+    estado_llenado, log_llenado = _intentar_llenar_formulario(page, codigo_factura)
+    logs.append(log_llenado)
+
+    # Si el llenado falla definitivamente, lo contamos como duplicado u otro fallo y paramos.
+    if estado_llenado == ESTADO_OMITIDO_DUPLICADA:
+        return ESTADO_OMITIDO_DUPLICADA, None, codigo_factura, "\n".join(logs)
+    if estado_llenado != ESTADO_EXITO:
+        return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
+
     try:
-        # --- BLOQUE DE VERIFICACIONES PREVIAS (PRE-FLIGHT CHECKS) ---
-
-        # 1. Verificar si el nombre de la carpeta contiene palabras de exclusión.
-        nombre_mayus = subfolder_name.upper()
-        if any(palabra in nombre_mayus for palabra in PALABRAS_EXCLUSION_CARPETAS):
-            msg = f"OMITIENDO: El nombre de la carpeta contiene una palabra de exclusión."
-            logs.append(msg)
-            return ESTADO_OMITIDO_RADICADO, None, None, "\n".join(logs)
-
-        # 2. Verificar si ya existe un RAD.pdf (prueba de radicación para Previsora).
-        if (subfolder_path / "RAD.pdf").is_file():
-            msg = "OMITIENDO: Ya existe un archivo RAD.pdf en esta carpeta."
-            logs.append(msg)
-            return ESTADO_OMITIDO_RADICADO, None, None, "\n".join(logs)
-
-        # --- FIN DE VERIFICACIONES ---
-        
-        codigo_factura, pdf_path, pdf_log = encontrar_y_validar_pdfs(
-            subfolder_path, subfolder_name, PREVISORA_NOMBRE_EN_PDF
-        )
-        logs.append(pdf_log)
-        if not (codigo_factura and pdf_path):
-            return ESTADO_FALLO, None, None, "\n".join(logs)
-        
-        estado_llenado, log_llenado = llenar_formulario_previsora(page, codigo_factura)
-        logs.append(log_llenado)
-        if estado_llenado != ESTADO_EXITO:
-            return estado_llenado, None, codigo_factura, "\n".join(logs)
-
+        # Los pasos siguientes son críticos; si fallan, son un error definitivo.
+        logs.append("\n--- PASO 2: Subida de Archivos ---")
         estado_subida, log_subida = subir_y_enviar_previsora(page, pdf_path)
         logs.append(log_subida)
-        if estado_subida != ESTADO_EXITO:
-            return estado_subida, None, codigo_factura, "\n".join(logs)
-            
+        if estado_subida != ESTADO_EXITO: raise Exception("Fallo en la subida de archivos.")
+
+        logs.append("\n--- PASO 3: Guardado de Confirmación ---")
         pdf_final_path, radicado_final, log_confirmacion = guardar_confirmacion_previsora(page, subfolder_path)
         logs.append(log_confirmacion)
-
-        if pdf_final_path:
-            return ESTADO_EXITO, radicado_final, codigo_factura, "\n".join(logs)
-        else:
-            return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
+        if not pdf_final_path: raise Exception("Fallo al guardar la confirmación final.")
+            
+        logs.append(f"\n--- ÉXITO COMPLETO! Carpeta '{subfolder_name}' procesada. Radicado: {radicado_final} ---")
+        return ESTADO_EXITO, radicado_final, codigo_factura, "\n".join(logs)
 
     except Exception as e:
-        error_msg = f"ERROR CRÍTICO en Previsora/procesar_carpeta para '{subfolder_name}': {e}"
-        traceback.print_exc()
-        return ESTADO_FALLO, None, None, "\n".join(logs + [error_msg])
+        logs.append(f"\nERROR CRÍTICO después del llenado: {e}")
+        return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
