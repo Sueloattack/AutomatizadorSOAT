@@ -203,78 +203,73 @@ def guardar_confirmacion_previsora(page: Page, output_folder: Path) -> tuple[str
         logs.append(error_msg); traceback.print_exc()
         return None, None, "\n".join(logs)
 
-# --- FUNCIÓN DE AYUDA PARA MANEJAR EL LLENADO CON REINTENTO ---
-def _intentar_llenar_formulario(page: Page, codigo_factura: str) -> tuple[str, str]:
-    """
-    Intenta llenar el formulario. Si falla por un timeout (el "dropdown tímido"),
-    recarga la página y lo intenta una vez más. Evita generar screenshots
-    para este fallo común y esperado.
-    """
-    logs = []
-    MAX_ATTEMPTS = 3
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        try:
-            # Esta es la función que SÍ puede fallar
-            return llenar_formulario_previsora(page, codigo_factura)
-        except PlaywrightTimeoutError as e:
-            # ¡Capturamos SOLO el TimeoutError!
-            logs.append(f"ADVERTENCIA: Falló el llenado en intento #{attempt} (Timeout). Razón: {str(e).splitlines()[0]}")
-            if attempt < MAX_ATTEMPTS:
-                logs.append("  -> Recargando la página para reintentar...")
-                page.reload(wait_until="domcontentloaded", timeout=45000)
-                page.wait_for_timeout(2000)
-            else:
-                logs.append("ERROR: Se alcanzó el número máximo de reintentos para el llenado.")
-                # Forzar la creación de un screenshot SOLO en el último fallo
-                page.screenshot(path=f"error_final_formulario_{codigo_factura}_{time.strftime('%H%M%S')}.png")
-                return ESTADO_FALLO, "\n".join(logs)
-    
-    # Esto no debería alcanzarse, pero es una salvaguarda
-    return ESTADO_FALLO, "\n".join(logs)
-
 def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> tuple[str, str | None, str | None, str]:
-    """Orquestador para Previsora, que ahora delega la lógica de reintento de llenado."""
+    """
+    Orquestador para Previsora con una estrategia de reintento proactiva:
+    si un intento falla, recarga la página antes de volver a intentarlo.
+    """
     logs = [f"--- Iniciando Playwright/Previsora para: '{subfolder_name}' ---"]
     
-    # Verificaciones previas
-    palabras_encontradas = [p for p in PALABRAS_EXCLUSION_CARPETAS if p in subfolder_name.upper()]
-    if palabras_encontradas:
-        return ESTADO_OMITIDO_RADICADO, None, None, f"OMITIENDO: Nombre de carpeta contiene exclusión: '{', '.join(palabras_encontradas)}'."
-    if (subfolder_path / "RAD.pdf").is_file():
-        return ESTADO_OMITIDO_RADICADO, None, None, "OMITIENDO: Ya existe RAD.pdf."
+    # --- Verificaciones previas ---
+    if any(p in subfolder_name.upper() for p in PALABRAS_EXCLUSION_CARPETAS) or (subfolder_path / "RAD.pdf").is_file():
+        return ESTADO_OMITIDO_RADICADO, None, None, f"OMITIENDO: Carpeta excluida por nombre o ya radicada."
 
     codigo_factura, pdf_path, pdf_log = encontrar_y_validar_pdfs(subfolder_path, subfolder_name, PREVISORA_NOMBRE_EN_PDF)
     logs.append(pdf_log)
     if not (codigo_factura and pdf_path):
         return ESTADO_FALLO, None, None, "\n".join(logs)
-    
-    # --- PROCESO WEB PRINCIPAL ---
-    # Delegamos el llenado a la función de reintento inteligente.
-    logs.append("\n--- PASO 1: Llenado de Formulario ---")
-    estado_llenado, log_llenado = _intentar_llenar_formulario(page, codigo_factura)
-    logs.append(log_llenado)
-
-    # Si el llenado falla definitivamente, lo contamos como duplicado u otro fallo y paramos.
-    if estado_llenado == ESTADO_OMITIDO_DUPLICADA:
-        return ESTADO_OMITIDO_DUPLICADA, None, codigo_factura, "\n".join(logs)
-    if estado_llenado != ESTADO_EXITO:
-        return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
-
-    try:
-        # Los pasos siguientes son críticos; si fallan, son un error definitivo.
-        logs.append("\n--- PASO 2: Subida de Archivos ---")
-        estado_subida, log_subida = subir_y_enviar_previsora(page, pdf_path)
-        logs.append(log_subida)
-        if estado_subida != ESTADO_EXITO: raise Exception("Fallo en la subida de archivos.")
-
-        logs.append("\n--- PASO 3: Guardado de Confirmación ---")
-        pdf_final_path, radicado_final, log_confirmacion = guardar_confirmacion_previsora(page, subfolder_path)
-        logs.append(log_confirmacion)
-        if not pdf_final_path: raise Exception("Fallo al guardar la confirmación final.")
+        
+    MAX_ATTEMPTS = 3 # Aumentamos a 3 para más robustez
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            logs.append(f"\n--- Intento de radicación #{attempt}/{MAX_ATTEMPTS} ---")
             
-        logs.append(f"\n--- ÉXITO COMPLETO! Carpeta '{subfolder_name}' procesada. Radicado: {radicado_final} ---")
-        return ESTADO_EXITO, radicado_final, codigo_factura, "\n".join(logs)
+            # --- LÓGICA DE RECARGA PROACTIVA ---
+            # A partir del SEGUNDO intento, siempre recargamos la página primero.
+            if attempt > 1:
+                logs.append("   -> Fallo en intento anterior. Recargando la página para empezar de nuevo...")
+                page.reload(wait_until="domcontentloaded", timeout=45000)
+                # Opcional: una pequeña espera tras la recarga puede ayudar a estabilizar
+                page.wait_for_timeout(3000) 
+            
+            # --- PASO 1: Llenado de Formulario ---
+            logs.append("\n--- PASO 1: Llenado de Formulario ---")
+            estado_llenado, log_llenado = llenar_formulario_previsora(page, codigo_factura)
+            logs.append(log_llenado)
+            if estado_llenado == ESTADO_OMITIDO_DUPLICADA: 
+                return ESTADO_OMITIDO_DUPLICADA, None, codigo_factura, "\n".join(logs)
+            if estado_llenado != ESTADO_EXITO: 
+                raise Exception("El llenado de formulario falló.") # Provoca el 'except' para el reintento
 
-    except Exception as e:
-        logs.append(f"\nERROR CRÍTICO después del llenado: {e}")
-        return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
+            # --- PASO 2: Subida de Archivos ---
+            logs.append("\n--- PASO 2: Subida de Archivos ---")
+            estado_subida, log_subida = subir_y_enviar_previsora(page, pdf_path)
+            logs.append(log_subida)
+            if estado_subida != ESTADO_EXITO: 
+                raise Exception("La subida de archivos falló.")
+
+            # --- PASO 3: Guardado de Confirmación ---
+            logs.append("\n--- PASO 3: Guardado de Confirmación ---")
+            pdf_final_path, radicado_final, log_confirmacion = guardar_confirmacion_previsora(page, subfolder_path)
+            logs.append(log_confirmacion)
+            if not pdf_final_path: 
+                raise Exception("El guardado de la confirmación falló.")
+            
+            # Si todos los pasos fueron exitosos, salimos del bucle con el resultado.
+            return ESTADO_EXITO, radicado_final, codigo_factura, "\n".join(logs)
+
+        except Exception as e:
+            # Capturar CUALQUIER error y prepararse para el siguiente intento.
+            logs.append(f"ADVERTENCIA: Ocurrió un error en el intento #{attempt}: {e}")
+            
+            # Solo tomamos un screenshot si es el ÚLTIMO intento fallido.
+            if attempt == MAX_ATTEMPTS:
+                logs.append("ERROR: Se alcanzó el número máximo de reintentos. Tomando screenshot final.")
+                try:
+                    page.screenshot(path=f"error_final_intento_{codigo_factura}.png")
+                except Exception as e_shot:
+                    logs.append(f"  -> No se pudo tomar el screenshot: {e_shot}")
+            # El bucle 'for' continuará con el siguiente intento (si queda alguno).
+    
+    # Si el bucle termina sin un 'return' exitoso, significa que todos los intentos fallaron.
+    return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
