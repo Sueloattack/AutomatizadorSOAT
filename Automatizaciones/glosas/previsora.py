@@ -21,6 +21,16 @@ ESTADO_FALLO = "FALLO"
 ESTADO_OMITIDO_RADICADO = "OMITIDO_RADICADO"
 ESTADO_OMITIDO_DUPLICADA = "OMITIDO_DUPLICADA"
 
+def _verificar_pagina_activa(page: Page):
+    """
+    Verifica rápidamente si los elementos clave del formulario de radicación están presentes.
+    Si no lo están, lanza una excepción para indicar que la página se ha caído o es incorrecta.
+    """
+    # Usamos un selector clave. Si el campo "Nº factura" no existe, asumimos que la página está mal.
+    # `is_visible` con un timeout muy corto es extremadamente rápido.
+    if not page.locator(f"#{PREVISORA_ID_FACTURA_FORM}").is_visible(timeout=1000):
+        raise Exception("Página inválida. El elemento clave del formulario no fue encontrado. Posible caída del sitio.")
+
 # --- Las funciones login_previsora y navegar_a_inicio_previsora NO CAMBIAN ---
 def login(page: Page) -> tuple[bool, str]:
     """Realiza el login en Previsora usando Playwright."""
@@ -210,15 +220,35 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> t
     """
     logs = [f"--- Iniciando Playwright/Previsora para: '{subfolder_name}' ---"]
     
-    # --- Verificaciones previas ---
+    # Verificaciones previas de nombre y RAD.pdf
     if any(p in subfolder_name.upper() for p in PALABRAS_EXCLUSION_CARPETAS) or (subfolder_path / "RAD.pdf").is_file():
         return ESTADO_OMITIDO_RADICADO, None, None, f"OMITIENDO: Carpeta excluida por nombre o ya radicada."
 
+    # 1. Encontrar los archivos
     codigo_factura, pdf_path, pdf_log = encontrar_y_validar_pdfs(subfolder_path, subfolder_name, PREVISORA_NOMBRE_EN_PDF)
     logs.append(pdf_log)
     if not (codigo_factura and pdf_path):
         return ESTADO_FALLO, None, None, "\n".join(logs)
         
+    # 2. Verificar el tamaño del archivo ANTES de cualquier cosa
+    try:
+        file_size = pdf_path.stat().st_size
+        logs.append(f"[INFO] Tamaño del archivo a subir '{pdf_path.name}': {file_size / (1024*1024):.2f} MB")
+        
+        if file_size > PREVISORA_MAX_FILE_SIZE_BYTES:
+            error_msg = (
+                f"ERROR: El archivo '{pdf_path.name}' excede el límite de tamaño permitido "
+                f"({file_size / (1024*1024):.2f} MB > {PREVISORA_MAX_FILE_SIZE_BYTES / (1024*1024):.0f} MB). "
+                f"Esta carpeta será omitida. Por favor, comprima el PDF manualmente."
+            )
+            logs.append(error_msg)
+            # Podrías crear un nuevo estado de fallo, pero marcarlo como fallo general está bien
+            return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
+            
+    except FileNotFoundError:
+        logs.append(f"ERROR: No se pudo encontrar el archivo {pdf_path} para verificar su tamaño.")
+        return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)    
+    
     MAX_ATTEMPTS = 3 # Aumentamos a 3 para más robustez
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
@@ -231,6 +261,9 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> t
                 page.reload(wait_until="domcontentloaded", timeout=45000)
                 # Opcional: una pequeña espera tras la recarga puede ayudar a estabilizar
                 page.wait_for_timeout(3000) 
+            
+            # VERIFICACIÓN DEL VIGÍA #1: ¿La página está bien ANTES de empezar a llenar?
+            _verificar_pagina_activa(page)
             
             # --- PASO 1: Llenado de Formulario ---
             logs.append("\n--- PASO 1: Llenado de Formulario ---")

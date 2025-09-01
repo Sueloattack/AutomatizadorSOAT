@@ -11,8 +11,8 @@ import queue # Importamos la librería de colas
 
 from playwright.sync_api import sync_playwright, Error as PlaywrightError
 
-from Configuracion.constantes import ASEGURADORAS_CON_EMAIL_LISTENER
-
+from Configuracion.constantes import AREA_FACTURACION_ID, ASEGURADORAS_CON_EMAIL_LISTENER, PREVISORA_ID
+from .utilidades import consolidar_radicados_pdf
 # Importamos nuestro nuevo trabajador de email
 from .trabajador_email import EmailListenerWorker
 
@@ -127,6 +127,14 @@ class TrabajadorAutomatizacion(QtCore.QObject):
                 ruta_json = self.carpeta_contenedora_path / "resultados_automatizacion.json"
                 with open(ruta_json, "w", encoding="utf-8") as f: json.dump(self.resultados_exitosos, f, indent=4)
                 self.progreso_update.emit("Resumen de éxitos guardado.")
+            
+            if (self.area_id == AREA_FACTURACION_ID and 
+                self.aseguradora_id == PREVISORA_ID and 
+                self.resultados_exitosos):
+                
+                # Si las condiciones se cumplen, llamamos a la función de consolidación.
+                exito_consolidacion, log_consolidacion = consolidar_radicados_pdf(self.carpeta_contenedora_path)
+                self.progreso_update.emit(log_consolidacion)
             
             end_time = time.time(); total_time = end_time - start_time
             email_failures_count = len(self.email_final_failures)

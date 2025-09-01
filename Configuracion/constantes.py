@@ -24,6 +24,7 @@ PREVISORA_ID_ELEMENTO_CLAVE_FORMULARIO = (
     "sl-ciudades"  # Usado para verificar que estamos en la página correcta
 )
 
+PREVISORA_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024
 PREVISORA_CIUDAD_FORM_NOMBRE = "Ibagué"
 PREVISORA_DATA_VALUE_CIUDAD = "73001"
 PREVISORA_CORREO_FORM = "radicacionglosa@asotrauma.com.co"
@@ -53,7 +54,21 @@ PREVISORA_XPATH_BOTON_NUEVA_RECLAMACION = "//div[contains(@class, 'jconfirm-open
 
 PREVISORA_REDUCED_SLEEP_POST_UPLOAD = 0.1
 PREVISORA_NOMBRE_EN_PDF = "LA PREVISORA S.A."
+
+# ----------------- CONSTANTES ESPECÍFICAS PARA FACTURACIÓN -----------------
+
+# Value del select para "Factura presentada por primera vez"
 PREVISORA_VALUE_TIPO_CUENTA_FACTURACION = "1"
+
+# IDs de los inputs de subida de archivos para Facturación
+PREVISORA_ID_INPUT_FURIPS = "str_bytes_archivo_furips"     # Campo "Seleccionar archivo" (generalmente el primero)
+PREVISORA_ID_INPUT_FACTURA = "str_bytes_archivo_factura"   # Campo "Factura"
+PREVISORA_ID_INPUT_HC = "f-archivo-historia-clinica"    # Campo "Historia clínica"
+PREVISORA_ID_INPUT_SOPORTES_HC = "str_bytes_soporte_historia_clinica" # --- NUEVA CONSTANTE AÑADIDA ---
+
+# ID del botón "Enviar" del formulario de Facturación
+PREVISORA_ID_BOTON_ENVIAR_FACTURACION = "btn_enviar_datos1" # --- NUEVA CONSTANTE AÑADIDA ---
+
 # --- Constantes Mundial (Ejemplo Futuro) ---
 MUNDIAL_ID = "mundial"
 MUNDIAL_NOMBRE = "Seguros Mundial"

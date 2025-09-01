@@ -6,6 +6,8 @@ import sys
 import traceback
 from pathlib import Path
 from email.header import decode_header
+from PyPDF2 import PdfWriter, PdfReader
+import io
 
 
 from Configuracion.constantes import AXASOAT_EMAIL_SENDER, EMAIL_APP_PASSWORD, EMAIL_IMAP_SERVER, EMAIL_PROCESSED_FOLDER, EMAIL_SEARCH_DELAY_SECONDS, EMAIL_SEARCH_RETRIES, EMAIL_USER_ADDRESS
@@ -50,9 +52,8 @@ def encontrar_y_validar_pdfs(
     candidatos_carta_glosa = []
 
     try:
-        # --- Búsqueda (sin cambios) ---
+        # --- Búsqueda ---
         for item in subfolder_path.iterdir():
-            # ... (código de búsqueda como lo tenías) ...
             if not item.is_file(): continue
             filename = item.name
             if filename.upper() == "RAD.PDF": continue
@@ -104,23 +105,21 @@ def encontrar_y_validar_pdfs(
 
     except Exception as e:
         return None, None, f"{log_prefix}Error inesperado: {e}"
-def encontrar_documentos_facturacion(
-    subfolder_path: Path, nombre_subcarpeta: str
-) -> tuple[str | None, dict[str, Path] | None, str]:
+    
+def encontrar_documentos_facturacion(subfolder_path: Path, nombre_subcarpeta: str) -> tuple[str | None, dict[str, Path] | None, str]:
     """
     Busca los documentos necesarios para un radicado de Facturación.
 
-    Busca 4 archivos clave por su nombre (ignorando mayúsculas/minúsculas):
-    1. FACTURA-[...].pdf
-    2. RIPS-[...].pdf
-    3. SOPORTES-[...].pdf
-    4. ANEXOS-[...].pdf
+    Busca 3 archivos clave por sus prefijos:
+    1. FACTURA_... .pdf
+    2. FURIPS_... .pdf
+    3. HC_... .pdf
 
-    Extrae el código de la factura del nombre del archivo de factura.
+    Extrae el código de la factura (ej: FECR309222) de CUALQUIERA de los nombres de archivo.
 
     Devuelve:
     - El código de la factura a usar en el formulario.
-    - Un diccionario con las rutas a los archivos encontrados.
+    - Un diccionario con las rutas a los 3 archivos encontrados.
     - Un log del proceso.
     """
     subfolder_path = subfolder_path.resolve()
@@ -130,55 +129,103 @@ def encontrar_documentos_facturacion(
     documentos_encontrados = {}
     codigo_factura = None
 
-    # Patrón para extraer el código del archivo de factura.
-    # Ej: "FACTURA-FECR12345.pdf" -> captura "FECR12345"
-    factura_pattern = re.compile(r"FACTURA-([A-Z0-9]+)\.pdf", re.IGNORECASE)
+    # Patrón para extraer el código de factura, ej: de 'FACTURA_FECR309222.pdf'
+    pattern_codigo = re.compile(r"_(FECR|COEX|FERD|FERR|FCR)(\d+)\.pdf$", re.IGNORECASE)
 
     try:
         if not subfolder_path.is_dir():
             return None, None, f"{log_prefix}ERROR: Subcarpeta no existe."
 
         for item in subfolder_path.iterdir():
-            if not item.is_file():
-                continue
+            if not item.is_file(): continue
             
-            filename_lower = item.name.lower()
+            filename_upper = item.name.upper()
             
-            if filename_lower.startswith("factura-"):
+            if filename_upper.startswith("FACTURA_"):
                 documentos_encontrados["factura"] = item
-                match = factura_pattern.match(item.name)
+                log_messages.append(f"{log_prefix}  -> Encontrada FACTURA: {item.name}")
+            elif filename_upper.startswith("FURIPS_"):
+                documentos_encontrados["furips"] = item
+                log_messages.append(f"{log_prefix}  -> Encontrados FURIPS: {item.name}")
+            elif filename_upper.startswith("HC_"):
+                documentos_encontrados["hc"] = item
+                log_messages.append(f"{log_prefix}  -> Encontrada Historia Clínica: {item.name}")
+
+            # Intentar extraer el código de factura de cualquier archivo
+            if not codigo_factura:
+                match = pattern_codigo.search(item.name)
                 if match:
-                    codigo_factura = match.group(1).upper()
-                    log_messages.append(f"{log_prefix}  -> Encontrada FACTURA: {item.name} (Código: {codigo_factura})")
-
-            elif filename_lower.startswith("rips-"):
-                documentos_encontrados["rips"] = item
-                log_messages.append(f"{log_prefix}  -> Encontrados RIPS: {item.name}")
-                
-            elif filename_lower.startswith("soportes-"):
-                documentos_encontrados["soportes"] = item
-                log_messages.append(f"{log_prefix}  -> Encontrados SOPORTES: {item.name}")
-
-            elif filename_lower.startswith("anexos-"):
-                documentos_encontrados["anexos"] = item
-                log_messages.append(f"{log_prefix}  -> Encontrados ANEXOS: {item.name}")
+                    codigo_factura = f"{match.group(1)}{match.group(2)}"
+                    log_messages.append(f"{log_prefix}  -> Código de factura extraído: {codigo_factura}")
         
         # Validación
-        documentos_requeridos = ["factura", "rips", "soportes", "anexos"]
+        documentos_requeridos = ["factura", "furips", "hc"]
         faltantes = [doc for doc in documentos_requeridos if doc not in documentos_encontrados]
-
         if faltantes:
-            error_msg = f"{log_prefix}ERROR: Faltan documentos requeridos: {', '.join(faltantes)}"
-            return None, None, "\n".join(log_messages + [error_msg])
-        
+            return None, None, f"{log_prefix}ERROR: Faltan documentos requeridos: {', '.join(faltantes)}"
         if not codigo_factura:
-            return None, None, f"{log_prefix}ERROR: Se encontró el PDF de factura, pero no se pudo extraer el código."
+            return None, None, f"{log_prefix}ERROR: No se pudo extraer el código de factura de ningún archivo."
             
-        log_messages.append(f"{log_prefix}Todos los documentos de facturación requeridos fueron encontrados.")
         return codigo_factura, documentos_encontrados, "\n".join(log_messages)
 
     except Exception as e:
-        error_msg = f"{log_prefix}Error inesperado buscando documentos de facturación: {e}"
-        traceback.print_exc()
-        return None, None, "\n".join(log_messages + [error_msg])
+        return None, None, f"{log_prefix}Error inesperado: {e}"
     
+def consolidar_radicados_pdf(carpeta_contenedora: Path, nombre_salida: str = "RADICADO.pdf") -> tuple[bool, str]:
+    """
+    Busca todos los archivos RAD.pdf individuales dentro de las subcarpetas,
+    los une en un solo archivo PDF maestro y elimina los archivos individuales.
+
+    Args:
+        carpeta_contenedora: La carpeta principal (ej. 'CUENTA 66553')
+        nombre_salida: El nombre del archivo PDF unificado final.
+
+    Returns:
+        (éxito, mensaje_log)
+    """
+    logs = [f"\n--- Iniciando Consolidación de Radicados en: {carpeta_contenedora.name} ---"]
+    pdfs_a_unir = []
+
+    # 1. Buscar recursivamente todos los RAD.pdf en las subcarpetas
+    for subfolder in carpeta_contenedora.iterdir():
+        if subfolder.is_dir():
+            rad_file = subfolder / "RAD.pdf"
+            if rad_file.is_file():
+                pdfs_a_unir.append(rad_file)
+
+    if not pdfs_a_unir:
+        return True, "\n".join(logs + ["No se encontraron archivos RAD.pdf para consolidar. Proceso omitido."])
+
+    logs.append(f"Se encontraron {len(pdfs_a_unir)} archivos RAD.pdf para unir.")
+    pdfs_a_unir.sort() # Ordenar alfabéticamente por ruta, lo que usualmente ordena por número de subcarpeta
+    
+    merger = PdfWriter()
+    
+    try:
+        # 2. Leer y añadir cada PDF al objeto 'merger'
+        for pdf_path in pdfs_a_unir:
+            merger.append(str(pdf_path))
+        
+        # 3. Guardar el archivo unificado
+        ruta_salida = carpeta_contenedora / nombre_salida
+        with open(ruta_salida, "wb") as f_out:
+            merger.write(f_out)
+        
+        logs.append(f"¡ÉXITO! Archivo consolidado guardado como '{ruta_salida.name}'.")
+        merger.close()
+
+        # 4. (Opcional pero recomendado) Limpiar los archivos RAD.pdf individuales
+        for pdf_path in pdfs_a_unir:
+            try:
+                pdf_path.unlink()
+            except OSError as e:
+                logs.append(f"ADVERTENCIA: No se pudo eliminar el archivo individual {pdf_path.name}: {e}")
+        logs.append("Archivos RAD.pdf individuales eliminados.")
+        
+        return True, "\n".join(logs)
+
+    except Exception as e:
+        error_msg = f"ERROR CRÍTICO durante la consolidación de PDFs: {e}"
+        traceback.print_exc()
+        if 'merger' in locals(): merger.close()
+        return False, "\n".join(logs + [error_msg])
