@@ -1,5 +1,3 @@
-# AutomatizadorSOAT/Automatizaciones/facturacion/previsora.py
-
 import traceback
 from pathlib import Path
 import time
@@ -17,7 +15,6 @@ try:
 except ImportError:
     raise ImportError("ERROR CRITICO: No se pudieron importar módulos.")
 
-# Reutilizamos las funciones que son 100% idénticas
 from ..glosas.previsora import login, navegar_a_inicio, guardar_confirmacion_previsora, _verificar_pagina_activa
 
 # Estados
@@ -34,31 +31,41 @@ def llenar_formulario_facturacion(page: Page, codigo_factura: str) -> tuple[str,
     """
     logs = [f"  Llenando formulario de Facturación (Factura: {codigo_factura})..."]
     try:
-        # Llenado de campos
-        page.locator(f"//input[@id='{PREVISORA_ID_CIUDAD_HIDDEN_FORM}']/..").click()
-        page.locator(PREVISORA_XPATH_CIUDAD_OPCION).click()
-        page.locator(f"#{PREVISORA_ID_FACTURA_FORM}").fill(codigo_factura)
+        dropdown_ciudad_container = page.locator(f"//input[@id='{PREVISORA_ID_CIUDAD_HIDDEN_FORM}']/..")
+        opcion_ciudad = page.locator(PREVISORA_XPATH_CIUDAD_OPCION)
+        factura_input = page.locator(f"#{PREVISORA_ID_FACTURA_FORM}")
+        
+        logs.append("    - Abriendo dropdown de Ciudad...")
+        dropdown_ciudad_container.click()
+        logs.append(f"    - Seleccionando '{PREVISORA_CIUDAD_FORM_NOMBRE}'...")
+        opcion_ciudad.click()
+        logs.append("    - Ciudad OK.")
+
+        factura_input.fill(codigo_factura)
+        page.locator(f"#{PREVISORA_ID_CORREO_FORM}").fill(PREVISORA_CORREO_FORM)
         page.locator(f"#{PREVISORA_ID_USUARIO_REGISTRA_FORM}").fill(PREVISORA_USUARIO_REGISTRA_FORM)
         page.locator(f"#{PREVISORA_ID_RAMO_FORM}").select_option(label=PREVISORA_RAMO_FORM)
-        page.locator(f"#{PREVISORA_ID_AMPAROS_FORM}").select_option(value=PREVISORA_VALUE_AMPARO_FORM)
-        page.locator(f"#{PREVISORA_ID_TIPO_CUENTA_FORM}").select_option(value=PREVISORA_VALUE_TIPO_CUENTA_FACTURACION)
-        logs.append("    - Campos principales llenados (modo Facturación).")
+        logs.append("    - Campos principales llenados.")
         
-        # Manejo de Pop-up (IDÉNTICO A GLOSAS)
         try:
-            page.locator(PREVISORA_XPATH_POPUP_FACTURA_CONTINUAR).click(timeout=5000)
+            page.locator(PREVISORA_XPATH_POPUP_FACTURA_CONTINUAR).click(timeout=10000)
             logs.append("    - Pop-up de factura existente manejado.")
         except PlaywrightTimeoutError:
-            logs.append("    - No apareció pop-up de factura existente.")
+            logs.append("    - Pop-up de factura no apareció, continuando.")
 
-        time.sleep(0.5) # Pequeña pausa para estabilizar
-        if not page.locator(f"#{PREVISORA_ID_FACTURA_FORM}").input_value():
+        time.sleep(0.5)
+        if not factura_input.input_value():
             logs.append("    -> CAMPO FACTURA VACÍO. Omitiendo por duplicado.")
             return ESTADO_OMITIDO_DUPLICADA, "\n".join(logs)
 
+        page.locator(f"#{PREVISORA_ID_AMPAROS_FORM}").select_option(value=PREVISORA_VALUE_AMPARO_FORM)
+        page.locator(f"#{PREVISORA_ID_TIPO_CUENTA_FORM}").select_option(value=PREVISORA_VALUE_TIPO_CUENTA_FACTURACION)
+        logs.append("    - Amparos y Tipo de Cuenta OK.")
         return ESTADO_EXITO, "\n".join(logs)
     except Exception as e:
         error_msg = f"ERROR inesperado al llenar formulario de facturación: {e}"
+        logs.append(error_msg); 
+        traceback.print_exc(); 
         page.screenshot(path=f"error_form_facturacion_{codigo_factura}.png")
         return ESTADO_FALLO, "\n".join(logs + [error_msg])
 
@@ -85,6 +92,7 @@ def subir_archivos_facturacion(page: Page, documentos: dict[str, Path]) -> tuple
     except Exception as e:
         error_msg = f"ERROR inesperado al subir archivos de facturación: {e}"
         page.screenshot(path=f"error_subida_facturacion.png")
+        logs.append(error_msg); traceback.print_exc()
         return ESTADO_FALLO, "\n".join(logs + [error_msg])
 
 # --- ORQUESTADOR PRINCIPAL (RÉPLICA DE LA LÓGICA DE GLOSAS) ---
@@ -96,7 +104,7 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> t
     
     # Verificaciones previas
     if any(p in subfolder_name.upper() for p in PALABRAS_EXCLUSION_CARPETAS) or (subfolder_path / "RAD.pdf").is_file():
-        return ESTADO_OMITIDO_RADICADO, None, None, f"OMITIENDO: Carpeta excluida o ya radicada."
+        return ESTADO_OMITIDO_RADICADO, None, None, f"OMITIENDO: Carpeta excluida por nombre o ya radicada."
 
     codigo_factura, documentos, docs_log = encontrar_documentos_facturacion(subfolder_path, subfolder_name)
     logs.append(docs_log)

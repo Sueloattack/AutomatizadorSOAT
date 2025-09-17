@@ -8,6 +8,7 @@ from pathlib import Path
 from email.header import decode_header
 from PyPDF2 import PdfWriter, PdfReader
 import io
+import json
 
 
 from Configuracion.constantes import AXASOAT_EMAIL_SENDER, EMAIL_APP_PASSWORD, EMAIL_IMAP_SERVER, EMAIL_PROCESSED_FOLDER, EMAIL_SEARCH_DELAY_SECONDS, EMAIL_SEARCH_RETRIES, EMAIL_USER_ADDRESS
@@ -229,3 +230,67 @@ def consolidar_radicados_pdf(carpeta_contenedora: Path, nombre_salida: str = "RA
         traceback.print_exc()
         if 'merger' in locals(): merger.close()
         return False, "\n".join(logs + [error_msg])
+
+def encontrar_documentos_facturacion_axa(subfolder_path: Path, nombre_subcarpeta: str) -> tuple[str | None, str | None, dict[str, Path] | None, str]:
+    """
+    Busca y valida los archivos requeridos para Facturación en AXA,
+    incluyendo ahora el JSON (RIPS) y el XML (FEV).
+    Devuelve: (codigo_factura, cuv, diccionario_archivos_a_subir, log)
+    """
+    subfolder_path = subfolder_path.resolve()
+    log_prefix = f"[{nombre_subcarpeta}] "
+    logs = [f"{log_prefix}Buscando archivos requeridos para AXA Facturación..."]
+    
+    encontrados = { "factura_pdf": None, "furips_pdf": None, "hc_pdf": None, "coex_json": None, "coex_xml": None, "resultados_json": None }
+    codigo_factura, cuv = None, None
+    pattern_codigo = re.compile(r"(COEX|FECR)(\d+)", re.IGNORECASE)
+
+    try:
+        # Búsqueda
+        for item in subfolder_path.iterdir():
+            if not item.is_file(): continue
+            filename_upper = item.name.upper()
+
+            # Identificar cada archivo
+            if filename_upper.startswith("FACTURA_"): encontrados["factura_pdf"] = item
+            elif filename_upper.startswith("FURIPS_"): encontrados["furips_pdf"] = item
+            elif filename_upper.startswith("HC_"): encontrados["hc_pdf"] = item
+            elif filename_upper.endswith(".XML"): encontrados["coex_xml"] = item
+            elif "RESULTADOSMSPS" in filename_upper and "CUV" in filename_upper: encontrados["resultados_json"] = item
+            elif ("COEX" in filename_upper or "FECR" in filename_upper) and filename_upper.endswith(".JSON"): encontrados["coex_json"] = item
+
+            # Extraer código de factura
+            if not codigo_factura:
+                match = pattern_codigo.search(item.name)
+                if match: codigo_factura = f"{match.group(1).upper()}{match.group(2)}"
+
+        # Extracción del CUV
+        if encontrados["resultados_json"]:
+            try:
+                with open(encontrados["resultados_json"], 'r', encoding='utf-8', errors='replace') as f:
+                    data = json.load(f)
+                    cuv = data.get("CodigoUnicoValidacion")
+                if cuv: logs.append(f"{log_prefix}  -> CUV extraído.")
+            except Exception as e_json: return None, None, None, f"{log_prefix}ERROR leyendo JSON de CUV: {e_json}"
+
+        # Validación
+        # Ahora RIPS (.json) y FEV (.xml) son también requeridos
+        faltantes = [k for k in ["factura_pdf", "furips_pdf", "hc_pdf", "coex_json", "coex_xml", "resultados_json"] if not encontrados[k]]
+        if faltantes: return None, None, None, f"{log_prefix}ERROR: Faltan archivos: {', '.join(faltantes)}"
+        if not all([codigo_factura, cuv]): return None, None, None, f"{log_prefix}ERROR: No se pudo extraer el código de factura o el CUV."
+
+        logs.append(f"{log_prefix}  -> Validación OK. Todos los archivos encontrados.")
+        
+        # <<< CAMBIO: Ahora devolvemos 5 archivos para subir >>>
+        archivos_a_subir = {
+            "factura": encontrados["factura_pdf"],
+            "furips": encontrados["furips_pdf"],
+            "hc": encontrados["hc_pdf"],
+            "rips": encontrados["coex_json"],
+            "fev": encontrados["coex_xml"]
+        }
+        
+        return codigo_factura, cuv, archivos_a_subir, "\n".join(logs)
+
+    except Exception as e:
+        return None, None, None, f"{log_prefix}ERROR inesperado en 'encontrar_documentos': {e}"
