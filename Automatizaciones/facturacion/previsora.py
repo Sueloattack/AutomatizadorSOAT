@@ -1,3 +1,4 @@
+# Automatizaciones/facturacion/previsora.py
 import traceback
 from pathlib import Path
 import time
@@ -11,7 +12,7 @@ except ImportError:
 
 try:
     from Configuracion.constantes import *
-    from Core.utilidades import encontrar_documentos_facturacion
+    from Core.utilidades import encontrar_documentos_facturacion, guardar_screenshot_de_error
 except ImportError:
     raise ImportError("ERROR CRITICO: No se pudieron importar módulos.")
 
@@ -64,9 +65,10 @@ def llenar_formulario_facturacion(page: Page, codigo_factura: str) -> tuple[str,
         return ESTADO_EXITO, "\n".join(logs)
     except Exception as e:
         error_msg = f"ERROR inesperado al llenar formulario de facturación: {e}"
-        logs.append(error_msg); 
-        traceback.print_exc(); 
-        page.screenshot(path=f"error_form_facturacion_{codigo_factura}.png")
+        log_screenshot = guardar_screenshot_de_error(page, f"error_form_facturacion_{codigo_factura}.png")
+        logs.append(error_msg)
+        logs.append(log_screenshot)
+        traceback.print_exc()
         return ESTADO_FALLO, "\n".join(logs + [error_msg])
 
 def subir_archivos_facturacion(page: Page, documentos: dict[str, Path]) -> tuple[str, str]:
@@ -91,10 +93,11 @@ def subir_archivos_facturacion(page: Page, documentos: dict[str, Path]) -> tuple
         return ESTADO_EXITO, "\n".join(logs)
     except Exception as e:
         error_msg = f"ERROR inesperado al subir archivos de facturación: {e}"
-        page.screenshot(path=f"error_subida_facturacion.png")
-        logs.append(error_msg); traceback.print_exc()
-        return ESTADO_FALLO, "\n".join(logs + [error_msg])
-
+        log_screenshot = guardar_screenshot_de_error(page, "error_subida_facturacion.png")
+        logs.append(error_msg)
+        logs.append(log_screenshot)
+        traceback.print_exc()
+        
 # --- ORQUESTADOR PRINCIPAL (RÉPLICA DE LA LÓGICA DE GLOSAS) ---
 def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> tuple[str, str | None, str | None, str]:
     """
@@ -143,7 +146,7 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> t
             pdf_path, radicado, log_confirmacion = guardar_confirmacion_previsora(page, subfolder_path)
             logs.append(log_confirmacion)
             if not radicado:
-                 raise Exception("El guardado de confirmación de facturación falló.")
+                raise Exception("El guardado de confirmación de facturación falló.")
 
             return ESTADO_EXITO, radicado, codigo_factura, "\n".join(logs)
 

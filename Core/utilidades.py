@@ -3,12 +3,16 @@ from datetime import datetime
 import os
 import re
 import sys
+from time import time
 import traceback
 from pathlib import Path
 from email.header import decode_header
 from PyPDF2 import PdfWriter, PdfReader
 import io
 import json
+import tempfile
+import subprocess
+
 
 
 from Configuracion.constantes import AXASOAT_EMAIL_SENDER, EMAIL_APP_PASSWORD, EMAIL_IMAP_SERVER, EMAIL_PROCESSED_FOLDER, EMAIL_SEARCH_DELAY_SECONDS, EMAIL_SEARCH_RETRIES, EMAIL_USER_ADDRESS
@@ -294,3 +298,33 @@ def encontrar_documentos_facturacion_axa(subfolder_path: Path, nombre_subcarpeta
 
     except Exception as e:
         return None, None, None, f"{log_prefix}ERROR inesperado en 'encontrar_documentos': {e}"
+    
+def guardar_screenshot_de_error(page, nombre_base: str):
+    """
+    Toma una captura de pantalla de la página y la guarda en la carpeta
+    temporal del sistema (%temp%) con un nombre de archivo único.
+
+    Args:
+        page: La instancia de la página de Playwright.
+        nombre_base (str): Un nombre descriptivo para el archivo (ej: "login_previsora").
+    """
+    try:
+        # Obtener la ruta a la carpeta temporal del sistema
+        temp_dir = Path(tempfile.gettempdir())
+        
+        # Crear un nombre de archivo único para evitar sobreescribir
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"error_screenshot_{nombre_base}_{timestamp}.png"
+        
+        # Construir la ruta completa
+        ruta_screenshot = temp_dir / filename
+        
+        # Tomar la captura de pantalla
+        page.screenshot(path=ruta_screenshot)
+        
+        # Devolver la ruta donde se guardó para poder registrarla en el log
+        return f"Screenshot de error guardado en: {ruta_screenshot}"
+        
+    except Exception as e:
+        return f"FALLO AL GUARDAR SCREENSHOT: {e}"
+    

@@ -1,10 +1,10 @@
-# Automatizaciones/playwright_previsora.py
+# Automatizaciones/glosas/previsora.py
 import time
 import traceback
 from pathlib import Path
 import re
 
-from Core.utilidades import encontrar_y_validar_pdfs
+from Core.utilidades import encontrar_y_validar_pdfs, guardar_screenshot_de_error
 from playwright.sync_api import Page, expect, TimeoutError as PlaywrightTimeoutError
 try:
     from PIL import Image
@@ -54,7 +54,10 @@ def login(page: Page) -> tuple[bool, str]:
         return True, "\n".join(logs)
     except Exception as e:
         error_msg = f"ERROR inesperado durante el login: {e}"
-        logs.append(error_msg); traceback.print_exc(); page.screenshot(path="error_login.png")
+        log_screenshot = guardar_screenshot_de_error(page, "previsora_glosas_login")
+        logs.append(error_msg)
+        logs.append(log_screenshot) # <-- Añadimos la ruta al log
+        traceback.print_exc()
         return False, "\n".join(logs)
 
 def navegar_a_inicio(page: Page) -> tuple[bool, str]:
@@ -68,7 +71,10 @@ def navegar_a_inicio(page: Page) -> tuple[bool, str]:
         return True, "\n".join(logs)
     except Exception as e:
         error_msg = f"ERROR inesperado al navegar a 'Inicio': {e}"
-        logs.append(error_msg); traceback.print_exc(); page.screenshot(path="error_navegacion.png")
+        log_screenshot = guardar_screenshot_de_error(page, "previsora_glosas_inicio")
+        logs.append(error_msg)
+        logs.append(log_screenshot) # <-- Añadimos la ruta al log
+        traceback.print_exc()
         return False, "\n".join(logs)
 
 def llenar_formulario_previsora(page: Page, codigo_factura: str) -> tuple[str, str]:
@@ -108,7 +114,10 @@ def llenar_formulario_previsora(page: Page, codigo_factura: str) -> tuple[str, s
         return ESTADO_EXITO, "\n".join(logs)
     except Exception as e:
         error_msg = f"ERROR inesperado al llenar formulario: {e}"
-        logs.append(error_msg); traceback.print_exc(); page.screenshot(path=f"error_formulario_{codigo_factura}.png")
+        log_screenshot = guardar_screenshot_de_error(page, f"error_formulario_{codigo_factura}.png")
+        logs.append(error_msg)
+        logs.append(log_screenshot) # <-- Añadimos la ruta al log
+        traceback.print_exc()
         return ESTADO_FALLO, "\n".join(logs)
 
 # --- ESTA FUNCIÓN HA SIDO MODIFICADA ---
@@ -131,8 +140,10 @@ def subir_y_enviar_previsora(page: Page, pdf_path: Path) -> tuple[str, str]:
         return ESTADO_EXITO, "\n".join(logs)
     except Exception as e:
         error_msg = f"ERROR inesperado al subir o enviar: {e}"
-        page.screenshot(path=f"error_screenshot_subida_{pdf_path.stem}_{time.strftime('%H%M%S')}.png")
-        logs.append(error_msg); traceback.print_exc()
+        log_screenshot = guardar_screenshot_de_error(page, f"error_screenshot_subida_{pdf_path.stem}_{time.strftime('%H%M%S')}.png")
+        logs.append(error_msg)
+        logs.append(log_screenshot) 
+        traceback.print_exc()
         return ESTADO_FALLO, "\n".join(logs)
 
 # --- ESTA FUNCIÓN HA SIDO MODIFICADA ---
@@ -209,8 +220,10 @@ def guardar_confirmacion_previsora(page: Page, output_folder: Path) -> tuple[str
 
     except Exception as e:
         error_msg = f"ERROR inesperado en la confirmación final: {e}"
-        page.screenshot(path=f"error_screenshot_confirmacion_{output_folder.name}_{time.strftime('%H%M%S')}.png")
-        logs.append(error_msg); traceback.print_exc()
+        log_screenshot = guardar_screenshot_de_error(page, f"error_screenshot_confirmacion_{output_folder.name}_{time.strftime('%H%M%S')}.png")
+        logs.append(error_msg)
+        logs.append(log_screenshot) 
+        traceback.print_exc()
         return None, None, "\n".join(logs)
 
 def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> tuple[str, str | None, str | None, str]:
