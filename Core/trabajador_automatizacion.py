@@ -36,6 +36,7 @@ class TrabajadorAutomatizacion(QtCore.QObject):
         self.email_job_queue = queue.Queue()
         self.email_final_failures = []
         self.email_thread = None
+        self.email_worker = None
 
         # Listas para la nueva reportería estructurada
         self.resultados_exitosos = []
@@ -52,11 +53,11 @@ class TrabajadorAutomatizacion(QtCore.QObject):
         if self.aseguradora_id in ASEGURADORAS_CON_EMAIL_LISTENER:
             self.progreso_update.emit("[INFO] Esta aseguradora requiere el listener de email. Iniciando hilo...")
             self.email_thread = QtCore.QThread(self)
-            email_worker = EmailListenerWorker(self.email_job_queue)
-            email_worker.moveToThread(self.email_thread)
-            email_worker.progreso_update.connect(self.progreso_update)
-            email_worker.finished.connect(self.handle_email_failures)
-            self.email_thread.started.connect(email_worker.run)
+            self.email_worker = EmailListenerWorker(self.email_job_queue)
+            self.email_worker.moveToThread(self.email_thread)
+            self.email_worker.progreso_update.connect(self.progreso_update)
+            self.email_worker.finished.connect(self.handle_email_failures)
+            self.email_thread.started.connect(self.email_worker.run)
             self.email_thread.start()
         else:
             self.progreso_update.emit("[INFO] Esta aseguradora no requiere el listener de email.")

@@ -62,7 +62,9 @@ class EmailListenerWorker(QtCore.QObject):
                 # 2. Filtrar por fecha y remitente en Python
                 email_date = parsedate_to_datetime(header_msg['Date'])
                 if email_date.date() != datetime.now().date(): continue
-                from_header = str(decode_header(header_msg['From'])[0][0])
+                
+                # FIX: Usar el encabezado 'From' crudo para evitar problemas con el nombre.
+                from_header = header_msg['From']
                 if AXASOAT_EMAIL_SENDER not in from_header: continue
                 
                 # 3. Si coincide, obtener el cuerpo completo
