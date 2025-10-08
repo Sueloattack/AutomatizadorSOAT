@@ -136,9 +136,9 @@ AXASOAT_SELECTOR_MODAL_FACTURA_ACEPTAR = "button[selector='Aceptar_button_select
 AXASOAT_SELECTOR_MODAL_POST_UPLOAD_ACEPTAR = "div:has-text('¿Desea Continuar?') >> button[selector='Aceptar_button_selector']"
 AXASOAT_SELECTOR_MODAL_FINAL_TEXTO = "p:has-text('reclamacion registrada correctamente')"
 AXASOAT_SELECTOR_MODAL_FINAL_ACEPTAR = "div:has-text('reclamacion registrada correctamente') >> button[selector='Aceptar_button_selector']"
-AXASOAT_TIPO_CUENTA_FORM_FACTURACION = "Factura presentada por primera vez"  # <<< NUEVA
-AXASOAT_CORREO_FACTURACION = "facturacion@asotrauma.com.co"                  # <<< NUEVA
-AXASOAT_USUARIO_REGISTRA_FACTURACION = "clinica asotrauma"               # <<< NUEVA
+AXASOAT_TIPO_CUENTA_FORM_FACTURACION = "Factura presentada por primera vez"
+AXASOAT_CORREO_FACTURACION = "facturacion@asotrauma.com.co"           
+AXASOAT_USUARIO_REGISTRA_FACTURACION = "clinica asotrauma"             
 AXASOAT_SELECTOR_CUV_INPUT = "input[name='cuv_text']"     
 AXASOAT_SELECTOR_MODAL_FACTURA_RECIBIDA_ACEPTAR = "div:has-text('fue recibida el dia') >> button:has-text('Aceptar')"
 
