@@ -3,7 +3,7 @@ from datetime import datetime
 import os
 import re
 import sys
-from time import time
+import time
 import traceback
 from pathlib import Path
 from email.header import decode_header
@@ -301,23 +301,27 @@ def encontrar_documentos_facturacion_axa(subfolder_path: Path, nombre_subcarpeta
     
 def guardar_screenshot_de_error(page, nombre_base: str):
     """
-    Toma una captura de pantalla de la página y la guarda en la carpeta
-    temporal del sistema (%temp%) con un nombre de archivo único.
+    Toma una captura de pantalla de la página y la guarda en una carpeta 'Errores'
+    dentro del directorio del proyecto, con un nombre de archivo único.
 
     Args:
         page: La instancia de la página de Playwright.
         nombre_base (str): Un nombre descriptivo para el archivo (ej: "login_previsora").
     """
     try:
-        # Obtener la ruta a la carpeta temporal del sistema
-        temp_dir = Path(tempfile.gettempdir())
+        # Directorio base del proyecto. Sube dos niveles desde este archivo (Core/utilidades.py -> proyecto/)
+        project_root = Path(__file__).resolve().parents[1]
+        error_dir = project_root / "Errores"
+        
+        # Crear la carpeta si no existe
+        error_dir.mkdir(exist_ok=True)
         
         # Crear un nombre de archivo único para evitar sobreescribir
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         filename = f"error_screenshot_{nombre_base}_{timestamp}.png"
         
         # Construir la ruta completa
-        ruta_screenshot = temp_dir / filename
+        ruta_screenshot = error_dir / filename
         
         # Tomar la captura de pantalla
         page.screenshot(path=ruta_screenshot)

@@ -196,7 +196,7 @@ def enviar_y_finalizar_radicado(page: Page) -> tuple[str | None, str]:
 # --- FUNCIÓN ORQUESTADORA PRINCIPAL ---
 # ==============================================================================
 
-def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> tuple[str, str | None, str | None, str]:
+def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, context: str = 'default') -> tuple[str, str | None, str | None, str]:
     """
     Orquesta el flujo completo de radicación de facturación para una carpeta.
     """

@@ -114,12 +114,39 @@ class TrabajadorAutomatizacion(QtCore.QObject):
                 nav_ok, nav_log = navegar_inicio_func(page); self.progreso_update.emit(nav_log)
                 if not nav_ok: raise Exception("Navegación inicial fallida.")
 
-                subcarpetas = sorted([d for d in self.carpeta_contenedora_path.iterdir() if d.is_dir()], key=lambda p: int(p.name) if p.name.isdigit() else float('inf'))
-                self.progreso_update.emit(f"Se procesarán {len(subcarpetas)} subcarpetas." if subcarpetas else "No hay subcarpetas para procesar.")
+                # --- Lógica de descubrimiento de trabajos ---
+                jobs = []
+                root_path = self.carpeta_contenedora_path
+                self.progreso_update.emit(f"Analizando carpetas en: {root_path}")
 
-                for i, subfolder_path in enumerate(subcarpetas):
-                    self.progreso_update.emit(f"\n>>> Procesando Carpeta {i+1}/{len(subcarpetas)}: '{subfolder_path.name}'")
-                    estado, radicado, codigo_factura, log_carpeta = procesar_carpeta_func(page, subfolder_path, subfolder_path.name)
+                for item in root_path.iterdir():
+                    if not item.is_dir():
+                        continue
+
+                    # Caso especial para la carpeta 'aceptadas'
+                    if item.name.lower() == 'aceptadas':
+                        self.progreso_update.emit("  -> Carpeta 'aceptadas' encontrada. Buscando subcarpetas...")
+                        for sub_item in item.iterdir():
+                            if sub_item.is_dir():
+                                jobs.append((sub_item, 'aceptadas'))
+                    else:
+                        # Caso para las carpetas normales en la raíz
+                        jobs.append((item, 'default'))
+                
+                # Ordenar los trabajos para asegurar que 'default' se procese antes que 'aceptadas'
+                sort_order = {'default': 0, 'aceptadas': 1}
+                jobs.sort(key=lambda x: (sort_order.get(x[1], 99), int(x[0].name) if x[0].name.isdigit() else float('inf')))
+
+                subcarpetas_a_procesar = [job[0] for job in jobs]
+                self.progreso_update.emit(f"Se procesarán {len(subcarpetas_a_procesar)} subcarpetas en total." if subcarpetas_a_procesar else "No hay subcarpetas para procesar.")
+                # --- Fin de la lógica de descubrimiento ---
+
+                for i, (subfolder_path, context) in enumerate(jobs):
+                    self.progreso_update.emit(f"\n>>> Procesando Carpeta {i+1}/{len(jobs)}: '{subfolder_path.name}' (Contexto: {context})")
+                    
+                    # Llamada a la función con el nuevo argumento de contexto
+                    estado, radicado, codigo_factura, log_carpeta = procesar_carpeta_func(page, subfolder_path, subfolder_path.name, context=context)
+                    
                     self.progreso_update.emit(log_carpeta)
 
                     # Clasificación de resultados para reportes separados

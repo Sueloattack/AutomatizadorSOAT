@@ -3,6 +3,8 @@ import time
 import traceback
 from pathlib import Path
 import re
+import os
+import fitz
 
 from Core.utilidades import encontrar_y_validar_pdfs, guardar_screenshot_de_error
 from playwright.sync_api import Page, expect, TimeoutError as PlaywrightTimeoutError
@@ -77,7 +79,7 @@ def navegar_a_inicio(page: Page) -> tuple[bool, str]:
         traceback.print_exc()
         return False, "\n".join(logs)
 
-def llenar_formulario_previsora(page: Page, codigo_factura: str) -> tuple[str, str]:
+def llenar_formulario_previsora(page: Page, codigo_factura: str, context: str = 'default') -> tuple[str, str]:
     """Llena el formulario con los datos de la factura."""
     logs = [f"  Llenando formulario (Factura: {codigo_factura})..."]
     try:
@@ -109,7 +111,16 @@ def llenar_formulario_previsora(page: Page, codigo_factura: str) -> tuple[str, s
             return ESTADO_OMITIDO_DUPLICADA, "\n".join(logs)
 
         page.locator(f"#{PREVISORA_ID_AMPAROS_FORM}").select_option(value=PREVISORA_VALUE_AMPARO_FORM)
-        page.locator(f"#{PREVISORA_ID_TIPO_CUENTA_FORM}").select_option(value=PREVISORA_VALUE_TIPO_CUENTA_FORM)
+        
+        # Lógica condicional para el tipo de cuenta basado en el contexto
+        if context == "aceptadas":
+            tipo_cuenta_valor = "5"  # Valor para carpetas 'aceptadas'
+            logs.append("    - Contexto 'aceptadas' detectado. Usando Tipo de Cuenta '5'.")
+        else:
+            tipo_cuenta_valor = PREVISORA_VALUE_TIPO_CUENTA_FORM  # Valor por defecto
+            logs.append(f"    - Usando Tipo de Cuenta por defecto '{tipo_cuenta_valor}'.")
+
+        page.locator(f"#{PREVISORA_ID_TIPO_CUENTA_FORM}").select_option(value=tipo_cuenta_valor)
         logs.append("    - Amparos y Tipo de Cuenta OK.")
         return ESTADO_EXITO, "\n".join(logs)
     except Exception as e:
@@ -226,7 +237,7 @@ def guardar_confirmacion_previsora(page: Page, output_folder: Path) -> tuple[str
         traceback.print_exc()
         return None, None, "\n".join(logs)
 
-def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> tuple[str, str | None, str | None, str]:
+def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, context: str = 'default') -> tuple[str, str | None, str | None, str]:
     """
     Orquestador para Previsora con una estrategia de reintento proactiva:
     si un intento falla, recarga la página antes de volver a intentarlo.
@@ -243,21 +254,49 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> t
     if not (codigo_factura and pdf_path):
         return ESTADO_FALLO, None, None, "\n".join(logs)
         
-    # 2. Verificar el tamaño del archivo ANTES de cualquier cosa
+    # 2. Verificar y comprimir el archivo si es necesario
     try:
         file_size = pdf_path.stat().st_size
-        logs.append(f"[INFO] Tamaño del archivo a subir '{pdf_path.name}': {file_size / (1024*1024):.2f} MB")
-        
+        logs.append(f"[INFO] Tamaño inicial del archivo '{pdf_path.name}': {file_size / (1024*1024):.2f} MB")
+
         if file_size > PREVISORA_MAX_FILE_SIZE_BYTES:
-            error_msg = (
-                f"ERROR: El archivo '{pdf_path.name}' excede el límite de tamaño permitido "
-                f"({file_size / (1024*1024):.2f} MB > {PREVISORA_MAX_FILE_SIZE_BYTES / (1024*1024):.0f} MB). "
-                f"Esta carpeta será omitida. Por favor, comprima el PDF manualmente."
-            )
-            logs.append(error_msg)
-            # Podrías crear un nuevo estado de fallo, pero marcarlo como fallo general está bien
-            return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
+            logs.append(f"ADVERTENCIA: El archivo supera los {PREVISORA_MAX_FILE_SIZE_BYTES / (1024*1024):.0f} MB. Intentando comprimir...")
             
+            original_pdf_path = pdf_path.with_name(f"{pdf_path.stem}-original.pdf")
+            
+            # Renombrar el archivo original
+            pdf_path.rename(original_pdf_path)
+            logs.append(f"  - Original renombrado a: {original_pdf_path.name}")
+
+            try:
+                # Comprimir el PDF
+                with fitz.open(original_pdf_path) as doc:
+                    doc.save(str(pdf_path), garbage=4, deflate=True, clean=True)
+                
+                new_size = pdf_path.stat().st_size
+                logs.append(f"  - Compresión completa. Nuevo tamaño: {new_size / (1024*1024):.2f} MB")
+
+                # Verificar si la compresión fue suficiente
+                if new_size > PREVISORA_MAX_FILE_SIZE_BYTES:
+                    error_msg = (
+                        f"ERROR: El archivo sigue siendo demasiado grande después de la compresión "
+                        f"({new_size / (1024*1024):.2f} MB > {PREVISORA_MAX_FILE_SIZE_BYTES / (1024*1024):.0f} MB). "
+                        f"Esta carpeta será omitida."
+                    )
+                    logs.append(error_msg)
+                    return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
+                
+                # Si la compresión fue exitosa, el proceso continúa con el nuevo pdf_path
+                logs.append("  - El archivo ahora está dentro del límite de tamaño.")
+
+            except Exception as e:
+                logs.append(f"ERROR CRÍTICO durante la compresión del PDF: {e}")
+                # Si la compresión falla, restauramos el nombre original para evitar inconsistencias
+                if original_pdf_path.exists():
+                    original_pdf_path.rename(pdf_path)
+                    logs.append(f"  - Se restauró el nombre del archivo original: {pdf_path.name}")
+                return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
+
     except FileNotFoundError:
         logs.append(f"ERROR: No se pudo encontrar el archivo {pdf_path} para verificar su tamaño.")
         return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)    
@@ -280,7 +319,7 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> t
             
             # --- PASO 1: Llenado de Formulario ---
             logs.append("\n--- PASO 1: Llenado de Formulario ---")
-            estado_llenado, log_llenado = llenar_formulario_previsora(page, codigo_factura)
+            estado_llenado, log_llenado = llenar_formulario_previsora(page, codigo_factura, context)
             logs.append(log_llenado)
             if estado_llenado == ESTADO_OMITIDO_DUPLICADA: 
                 return ESTADO_OMITIDO_DUPLICADA, None, codigo_factura, "\n".join(logs)
