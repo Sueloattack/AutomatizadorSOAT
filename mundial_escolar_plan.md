@@ -80,3 +80,62 @@ Este es el núcleo lógico para resolver las discrepancias.
 *   **Eficiencia:** Minimiza las llamadas a la API interna y los inicios de sesión en el portal.
 *   **Robustez:** Maneja errores esperados (glosa no encontrada) de forma inteligente y aísla los problemas de conciliación para revisión humana sin detener el proceso general.
 *   **Mantenibilidad:** La separación de la configuración, la lógica y la conciliación facilita futuras actualizaciones y correcciones.
+
+## 7. Trabajador automatizacion
+Buscar la Factura: Ingresar el número de factura y hacer clic en "Buscar".
+Analizar el Resultado: Después de buscar, pueden ocurrir tres escenarios distintos:
+Escenario A (Tabla con Resultados): Aparece una tabla. Se debe hacer clic en el ícono de "Responder Glosas". (Éxito).
+Escenario B (Mensaje de Conciliación): Aparece el mensaje "se encuentra en proceso de conciliación". (Fallo documentado).
+Escenario C (Sin Resultados): Ni la tabla ni el mensaje de conciliación aparecen, lo que implica que la factura no fue encontrada. (Fallo documentado).
+Actuar según el Escenario: Para los escenarios de fallo (B y C), se debe tomar una captura de pantalla y marcar el trabajo como fallido. Para el escenario de éxito (A), se debe proceder con la radicación.
+def run_mundial_escolar_automation(self):
+        # ... (código inicial sin cambios) ...
+        try:
+            sede_1, sede_2, no_reconocidas = separar_carpetas_por_sede(self.carpeta_contenedora_path)
+
+            # --- PREPARACIÓN: Crear el campo 'factura_completa'
+            # Es importante que el diccionario 'glosa' contenga la factura completa para buscar
+            for glosa_list in [sede_1, sede_2]:
+                for glosa in glosa_list:
+                    glosa['factura_completa'] = f"{glosa['prefijo']}{glosa['factura']}"
+
+            # ... (log de clasificación sin cambios) ...
+
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=self.headless_mode, slow_mo=50)
+                page = browser.new_page()
+
+                # --- PROCESAMIENTO SEDE 2 (ejemplo, se aplica igual a Sede 1) ---
+                if sede_2:
+                    self.progreso_update.emit("\n--- PROCESANDO SEDE 2 ---")
+                    # ... (login y navegación sin cambios) ...
+                    
+                    if login_ok:
+                        nav_ok, nav_log, iframe = mundial_escolar.navegar_a_inicio(page)
+                        self.progreso_update.emit(nav_log)
+                        
+                        if nav_ok:
+                            for glosa in sede_2:
+                                self.progreso_update.emit(f"\nProcesando glosa de carpeta: {os.path.basename(glosa['ruta'])}")
+                                
+                                # Llamada a la nueva función
+                                puede_continuar, log_proceso = mundial_escolar.procesar_factura(iframe, glosa, glosa['ruta'])
+                                self.progreso_update.emit(log_proceso)
+                                
+                                if puede_continuar:
+                                    # Si es éxito, aquí va la lógica para SUBIR archivos, etc.
+                                    # POR AHORA, lo marcamos como éxito.
+                                    self.progreso_update.emit("  -> Se procederá a la radicación...")
+                                    # EJEMPLO: subir_archivos(iframe, glosa['ruta'])
+                                    exitos += 1
+                                else:
+                                    # Si la función devolvió False, es un fallo documentado.
+                                    self.progreso_update.emit(f"  -> La glosa para {glosa['factura_completa']} no se puede procesar.")
+                                    fallos += 1
+                        else:
+                            # ... (código de fallo de navegación sin cambios) ...
+                            fallos += len(sede_2)
+                
+                # APLICA LA MISMA LÓGICA DE BUCLE PARA SEDE 1
+
+                # ... (resto del código sin cambios) ...

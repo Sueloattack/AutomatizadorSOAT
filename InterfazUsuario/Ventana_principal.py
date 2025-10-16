@@ -9,7 +9,8 @@ try:
     from Core.trabajador_automatizacion import TrabajadorAutomatizacion
     from Core.trabajador_reporte import TrabajadorReporte
     from Core.utilidades import resource_path
-    from Configuracion.constantes import APP_VERSION, CONFIGURACION_AREAS, AREA_GLOSAS_ID, AREA_FACTURACION_ID
+    from Configuracion.constantes import APP_VERSION, CONFIGURACION_AREAS, AREA_GLOSAS_ID, AREA_FACTURACION_ID, MUNDIAL_ESCOLAR_ID
+    from Automatizaciones.glosas import mundial_escolar
 except ImportError as e:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     QtWidgets.QMessageBox.critical(
@@ -306,10 +307,12 @@ class VentanaPrincipal(QtWidgets.QWidget):
                 self, "Proceso Activo", "Ya hay un proceso en curso."
             )
             return
+
         area_id = self.combo_area.currentData()
         aseguradora_id = self.combo_aseguradora.currentData()
         folder_path = self.folder_line_edit.text()
         modo_headless = self.headless_activo
+
         if (
             not aseguradora_id
             or not folder_path
@@ -325,7 +328,6 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self.log_text_edit.append(
             f"Preparando automatización para {self.combo_aseguradora.currentText()}..."
         )
-        # self.ultima_carpeta_procesada = folder_path # No es crucial para habilitar reporte con JSON
         self._actualizar_estado_botones(proceso_corriendo=True)
 
         self.hilo_activo = QtCore.QThread(self)
@@ -336,15 +338,16 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self.worker_activo.progreso_update.connect(self._actualizar_log)
         self.worker_activo.finalizado.connect(self._manejar_finalizacion_worker)
         self.worker_activo.error_critico.connect(self._mostrar_error_critico)
-        # Conexión para limpiar worker/hilo cuando el hilo termine
         self.hilo_activo.finished.connect(self.worker_activo.deleteLater)
         self.hilo_activo.finished.connect(self.hilo_activo.deleteLater)
         self.hilo_activo.finished.connect(
             self._limpiar_referencias_post_hilo
-        )  # Usar slot diferente
+        )
 
         self.hilo_activo.started.connect(self.worker_activo.run_automation)
         self.hilo_activo.start()
+
+
 
     @QtCore.Slot()
     def _generar_reporte(self):

@@ -331,4 +331,60 @@ def guardar_screenshot_de_error(page, nombre_base: str):
         
     except Exception as e:
         return f"FALLO AL GUARDAR SCREENSHOT: {e}"
+
+def separar_carpetas_por_sede(carpeta_raiz):
+    """
+    Clasifica las carpetas de glosas en Sede 1, Sede 2 o no reconocidas, 
+    basándose en el nombre de los archivos de glosa dentro de cada subcarpeta.
+
+    Args:
+        carpeta_raiz (str): La ruta a la carpeta que contiene las subcarpetas de glosas.
+
+    Returns:
+        tuple: Una tupla con tres listas de diccionarios: (sede_1, sede_2, no_reconocidas)
+               Cada diccionario contiene la ruta de la carpeta, el prefijo y el número de factura.
+    """
+    sede_1 = []
+    sede_2 = []
+    no_reconocidas = []
+
+    respuesta_glosa_pattern = re.compile(r"^(FECR|COEX|FERD|FERR|FCR)(\d+)\.pdf$", re.IGNORECASE)
+    carta_glosa_pattern = re.compile(r".*?([A-Z]+)[_-](\d+)[_-].*?\.pdf$", re.IGNORECASE)
+
+    for nombre_carpeta in os.listdir(carpeta_raiz):
+        ruta_completa = os.path.join(carpeta_raiz, nombre_carpeta)
+        if os.path.isdir(ruta_completa):
+            try:
+                info_glosa = None
+                for item in os.listdir(ruta_completa):
+                    if not os.path.isfile(os.path.join(ruta_completa, item)): continue
+
+                    match_respuesta = respuesta_glosa_pattern.match(item)
+                    if match_respuesta:
+                        prefijo = match_respuesta.group(1).upper()
+                        factura = match_respuesta.group(2)
+                        info_glosa = {"ruta": ruta_completa, "prefijo": prefijo, "factura": factura}
+                        break # Priorizamos la respuesta glosa
+
+                    match_carta = carta_glosa_pattern.search(item)
+                    if match_carta:
+                        prefijo = match_carta.group(1).upper()
+                        factura = match_carta.group(2)
+                        info_glosa = {"ruta": ruta_completa, "prefijo": prefijo, "factura": factura}
+                
+                if info_glosa:
+                    if info_glosa['prefijo'] in ['FECR', 'FERR']:
+                        sede_1.append(info_glosa)
+                    elif info_glosa['prefijo'] == 'COEX':
+                        sede_2.append(info_glosa)
+                    else:
+                        no_reconocidas.append(info_glosa)
+                else:
+                    no_reconocidas.append({"ruta": ruta_completa, "prefijo": None, "factura": None})
+
+            except Exception as e:
+                print(f"Error procesando la carpeta {ruta_completa}: {e}")
+                no_reconocidas.append({"ruta": ruta_completa, "prefijo": None, "factura": None})
+    
+    return sede_1, sede_2, no_reconocidas
     

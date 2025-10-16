@@ -8,18 +8,25 @@ from pathlib import Path
 from PySide6 import QtCore
 import json
 import queue
-
+from Automatizaciones.glosas import mundial_escolar
 from playwright.sync_api import sync_playwright, Error as PlaywrightError
+from Configuracion.constantes import MUNDIAL_ESCOLAR_URL
 
 # Importaciones de configuración y otros trabajadores
 from Configuracion.constantes import (
     AREA_GLOSAS_ID,
     AREA_FACTURACION_ID,
     ASEGURADORAS_CON_EMAIL_LISTENER,
-    PREVISORA_ID
+    PREVISORA_ID,
+    MUNDIAL_ESCOLAR_ID,
+    MUNDIAL_ESCOLAR_SEDE1_USER,
+    MUNDIAL_ESCOLAR_SEDE1_PASS,
+    MUNDIAL_ESCOLAR_SEDE2_USER,
+    MUNDIAL_ESCOLAR_SEDE2_PASS
 )
 from .trabajador_email import EmailListenerWorker
-from .utilidades import consolidar_radicados_pdf
+from .utilidades import consolidar_radicados_pdf, separar_carpetas_por_sede
+from Automatizaciones.glosas import mundial_escolar
 
 class TrabajadorAutomatizacion(QtCore.QObject):
     # --- Señales para comunicación con la GUI ---
@@ -86,6 +93,10 @@ class TrabajadorAutomatizacion(QtCore.QObject):
         self.resultados_exitosos = []
         self.reporte_fallos = []
         self.reporte_omitidos = []
+
+        if self.aseguradora_id == MUNDIAL_ESCOLAR_ID:
+            self.run_mundial_escolar_automation()
+            return
 
         self._iniciar_email_listener_si_es_necesario()
         
@@ -238,3 +249,130 @@ class TrabajadorAutomatizacion(QtCore.QObject):
             
             # Envío de la señal final a la GUI para reactivar botones
             self.finalizado.emit(exitos, fallos, omit_rad, omit_dup, email_fallos_count)
+
+    def run_mundial_escolar_automation(self):
+        self.progreso_update.emit("--- INICIANDO AUTOMATIZACIÓN MUNDIAL ESCOLAR ---")
+        start_time = time.time()
+        exitos, fallos, omitidos = 0, 0, 0
+
+        try:
+            # 1. Clasificar carpetas y preparar los datos de cada glosa
+            sede_1, sede_2, no_reconocidas = separar_carpetas_por_sede(self.carpeta_contenedora_path)
+            omitidos = len(no_reconocidas)
+
+            # Preparar campo 'factura_completa' que será usado en la búsqueda
+            for glosa_list in [sede_1, sede_2]:
+                for glosa in glosa_list:
+                    glosa['factura_completa'] = f"{glosa['prefijo'].strip()}{glosa['factura'].strip()}"
+
+            # --- Logging de carpetas clasificadas ---
+            self.progreso_update.emit("\n--- Clasificación de Carpetas ---")
+            self.progreso_update.emit(f"Sede 1 ({len(sede_1)} carpetas): " + ", ".join([os.path.basename(g['ruta']) for g in sede_1]))
+            self.progreso_update.emit(f"Sede 2 ({len(sede_2)} carpetas): " + ", ".join([os.path.basename(g['ruta']) for g in sede_2]))
+            if no_reconocidas:
+                self.progreso_update.emit(f"Omitidas/No Reconocidas ({omitidos} carpetas): " + ", ".join([os.path.basename(g['ruta']) for g in no_reconocidas]))
+                for glosa_omitida in no_reconocidas:
+                    motivo = "Omitida por formato de nombre no reconocido."
+                    self.reporte_omitidos.append(f"Carpeta: {os.path.basename(glosa_omitida['ruta']):<20} -> {motivo}")
+
+            # 2. Iniciar el navegador con Playwright
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=self.headless_mode, slow_mo=50)
+                page = browser.new_page()
+
+                # --- 3. PROCESAMIENTO SEDE 2 ---
+                if sede_2:
+                    self.progreso_update.emit("\n--- PROCESANDO SEDE 2 ---")
+                    login_ok, login_log = mundial_escolar.login(page, MUNDIAL_ESCOLAR_SEDE2_USER, MUNDIAL_ESCOLAR_SEDE2_PASS)
+                    self.progreso_update.emit(login_log)
+                    
+                    if login_ok:
+                        nav_ok, nav_log, iframe = mundial_escolar.navegar_a_inicio(page)
+                        self.progreso_update.emit(nav_log)
+                        
+                        if nav_ok and iframe:
+                            for glosa in sede_2:
+                                self.progreso_update.emit(f"\nProcesando glosa de carpeta: {os.path.basename(glosa['ruta'])}")
+                                # CORRECCIÓN AQUÍ: Pasamos 'page' como primer argumento
+                                puede_continuar, log_proceso = mundial_escolar.procesar_factura(page, iframe, glosa, glosa['ruta'])
+                                self.progreso_update.emit(log_proceso)
+                                
+                                if puede_continuar:
+                                    self.progreso_update.emit(f"  -> Se procederá a radicar glosa para {glosa['factura_completa']}...")
+                                    exitos += 1
+                                    self.resultados_exitosos.append({"subcarpeta": os.path.basename(glosa['ruta']), "factura": glosa['factura_completa'], "radicado": "RADICADO_PENDIENTE"})
+                                else:
+                                    self.progreso_update.emit(f"  -> FALLO DOCUMENTADO: La glosa para {glosa['factura_completa']} no se puede procesar.")
+                                    fallos += 1
+                                    self.reporte_fallos.append(log_proceso)
+                        else:
+                            self.progreso_update.emit("[ERROR] No se pudo navegar al formulario de Sede 2. Se omitirán todas las glosas de esta sede.")
+                            fallos += len(sede_2)
+                    else:
+                        self.progreso_update.emit("[ERROR] Login fallido para Sede 2. Se omitirán todas las glosas de esta sede.")
+                        fallos += len(sede_2)
+                
+                # --- PASO DE REINICIO DE SESIÓN ---
+                if sede_2 and sede_1:
+                    self.progreso_update.emit("\n--- REINICIANDO SESIÓN PARA CAMBIO DE SEDE ---")
+                    try:
+                        page.goto(MUNDIAL_ESCOLAR_URL, timeout=45000)
+                        self.progreso_update.emit("Página de login recargada para la siguiente sede.")
+                    except Exception as e_reload:
+                        self.progreso_update.emit(f"[ERROR CRÍTICO] No se pudo recargar la página de login. Abortando Sede 1. Error: {e_reload}")
+                        fallos += len(sede_1)
+                        sede_1 = []
+
+                # --- 4. PROCESAMIENTO SEDE 1 ---
+                if sede_1:
+                    self.progreso_update.emit("\n--- PROCESANDO SEDE 1 ---")
+                    login_ok, login_log = mundial_escolar.login(page, MUNDIAL_ESCOLAR_SEDE1_USER, MUNDIAL_ESCOLAR_SEDE1_PASS)
+                    self.progreso_update.emit(login_log)
+                    
+                    if login_ok:
+                        nav_ok, nav_log, iframe = mundial_escolar.navegar_a_inicio(page)
+                        self.progreso_update.emit(nav_log)
+                        
+                        if nav_ok and iframe:
+                            for glosa in sede_1:
+                                self.progreso_update.emit(f"\nProcesando glosa de carpeta: {os.path.basename(glosa['ruta'])}")
+                                # CORRECCIÓN AQUÍ: Pasamos 'page' como primer argumento
+                                puede_continuar, log_proceso = mundial_escolar.procesar_factura(page, iframe, glosa, glosa['ruta'])
+                                self.progreso_update.emit(log_proceso)
+                                
+                                if puede_continuar:
+                                    self.progreso_update.emit(f"  -> Se procederá a radicar glosa para {glosa['factura_completa']}...")
+                                    exitos += 1
+                                    self.resultados_exitosos.append({"subcarpeta": os.path.basename(glosa['ruta']), "factura": glosa['factura_completa'], "radicado": "RADICADO_PENDIENTE"})
+
+                                else:
+                                    self.progreso_update.emit(f"  -> FALLO DOCUMENTADO: La glosa para {glosa['factura_completa']} no se puede procesar.")
+                                    fallos += 1
+                                    self.reporte_fallos.append(log_proceso)
+                        else:
+                            self.progreso_update.emit("[ERROR] No se pudo navegar al formulario de Sede 1. Se omitirán todas las glosas de esta sede.")
+                            fallos += len(sede_1)
+                    else:
+                        self.progreso_update.emit("[ERROR] Login fallido para Sede 1. Se omitirán todas las glosas de esta sede.")
+                        fallos += len(sede_1)
+                
+                browser.close()
+
+        except Exception as e:
+            self.error_critico.emit(f"!!! ERROR CRÍTICO !!!\nERROR CRÍTICO DURANTE AUTOMATIZACIÓN MUNDIAL ESCOLAR:\n{e}\n{traceback.format_exc()}")
+        
+        finally:
+            # Esta sección se ejecuta siempre, incluso si hay un error crítico.
+            total_time = time.time() - start_time
+            tiempo_formateado = self._formatear_tiempo(total_time)
+            
+            summary_msg = (
+                f"\n--- FIN DEL PROCESO MUNDIAL ESCOLAR ---\n"
+                f"Éxitos: {exitos}\n"
+                f"Fallos: {fallos}\n"
+                f"Omitidas: {omitidos}\n"
+                f"Tiempo Total: {tiempo_formateado}"
+            )
+            self.progreso_update.emit(summary_msg)
+            # Emitimos la señal final para la GUI
+            self.finalizado.emit(exitos, fallos, omitidos, 0, 0)

@@ -95,6 +95,18 @@ MUNDIAL_NOMBRE = "Seguros Mundial"
 
 
 # ------------------------------------------------------------------------------
+# --- MUNDIAL ESCOLAR ---
+# ------------------------------------------------------------------------------
+MUNDIAL_ESCOLAR_ID = "mundial_escolar"
+MUNDIAL_ESCOLAR_NOMBRE = "Mundial Escolar"
+MUNDIAL_ESCOLAR_URL = "https://www.activa-it.net/Login.aspx"
+MUNDIAL_ESCOLAR_SEDE1_USER = "MUN730010082601"
+MUNDIAL_ESCOLAR_SEDE1_PASS = "Agosto2025*"
+MUNDIAL_ESCOLAR_SEDE2_USER = "MUN730010082602"
+MUNDIAL_ESCOLAR_SEDE2_PASS = "Asotrauma-2025="
+
+
+# ------------------------------------------------------------------------------
 # --- AXA COLPATRIA SOAT ---
 # ------------------------------------------------------------------------------
 
@@ -188,6 +200,7 @@ CONFIGURACION_AREAS = {
         (PREVISORA_NOMBRE, PREVISORA_ID),
         (MUNDIAL_NOMBRE, MUNDIAL_ID),
         (AXASOAT_NOMBRE, AXASOAT_ID),
+        (MUNDIAL_ESCOLAR_NOMBRE, MUNDIAL_ESCOLAR_ID),
     ],
     AREA_FACTURACION_ID: [
         (PREVISORA_NOMBRE, PREVISORA_ID),
