@@ -99,7 +99,7 @@ def subir_archivos_facturacion(page: Page, documentos: dict[str, Path]) -> tuple
         traceback.print_exc()
         
 # --- ORQUESTADOR PRINCIPAL (RÉPLICA DE LA LÓGICA DE GLOSAS) ---
-def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> tuple[str, str | None, str | None, str]:
+def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, context: str = 'default') -> tuple[str, str | None, str | None, str]:
     """
     Orquestador para Facturación con la estrategia de reintento proactiva.
     """

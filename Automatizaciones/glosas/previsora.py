@@ -260,12 +260,22 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, cont
         logs.append(f"[INFO] Tamaño inicial del archivo '{pdf_path.name}': {file_size / (1024*1024):.2f} MB")
 
         if file_size > PREVISORA_MAX_FILE_SIZE_BYTES:
-            logs.append(f"ADVERTENCIA: El archivo supera los {PREVISORA_MAX_FILE_SIZE_BYTES / (1024*1024):.0f} MB. Intentando comprimir...")
+            logs.append(f"ADVERTENCIA: El archivo supera los {PREVISORA_MAX_FILE_SIZE_BYTES / (1024*1024):.0f} MB.")
             
             original_pdf_path = pdf_path.with_name(f"{pdf_path.stem}-original.pdf")
             
-            # Renombrar el archivo original
-            pdf_path.rename(original_pdf_path)
+            # Si el backup ya existe, significa que ya intentamos comprimir este archivo y fallamos.
+            if original_pdf_path.exists():
+                error_msg = (
+                    f"ERROR: Se detectó un intento de compresión anterior ('{original_pdf_path.name}' existe). "
+                    f"El archivo sigue siendo demasiado grande. Esta carpeta será omitida para evitar bucles."
+                )
+                logs.append(error_msg)
+                return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
+
+            # Si no hay backup, es el primer intento. Procedemos a comprimir.
+            logs.append("Intentando comprimir por primera vez...")
+            pdf_path.rename(original_pdf_path) # Renombrar para crear el backup
             logs.append(f"  - Original renombrado a: {original_pdf_path.name}")
 
             try:
@@ -284,6 +294,7 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, cont
                         f"Esta carpeta será omitida."
                     )
                     logs.append(error_msg)
+                    # No restauramos el nombre, dejamos el -original.pdf como evidencia del fallo.
                     return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
                 
                 # Si la compresión fue exitosa, el proceso continúa con el nuevo pdf_path
@@ -291,7 +302,7 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, cont
 
             except Exception as e:
                 logs.append(f"ERROR CRÍTICO durante la compresión del PDF: {e}")
-                # Si la compresión falla, restauramos el nombre original para evitar inconsistencias
+                # Si la compresión falla, restauramos el nombre original para poder intentarlo de nuevo en otra ejecución.
                 if original_pdf_path.exists():
                     original_pdf_path.rename(pdf_path)
                     logs.append(f"  - Se restauró el nombre del archivo original: {pdf_path.name}")
@@ -350,10 +361,8 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, cont
             # Solo tomamos un screenshot si es el ÚLTIMO intento fallido.
             if attempt == MAX_ATTEMPTS:
                 logs.append("ERROR: Se alcanzó el número máximo de reintentos. Tomando screenshot final.")
-                try:
-                    page.screenshot(path=f"error_final_intento_{codigo_factura}.png")
-                except Exception as e_shot:
-                    logs.append(f"  -> No se pudo tomar el screenshot: {e_shot}")
+                log_screenshot = guardar_screenshot_de_error(page, f"error_final_intento_{codigo_factura}")
+                logs.append(log_screenshot)
             # El bucle 'for' continuará con el siguiente intento (si queda alguno).
     
     # Si el bucle termina sin un 'return' exitoso, significa que todos los intentos fallaron.

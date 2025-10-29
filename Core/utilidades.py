@@ -39,72 +39,61 @@ def encontrar_y_validar_pdfs(
     subfolder_path: Path, nombre_subcarpeta: str, nombre_aseguradora_en_pdf: str
 ) -> tuple[str | None, Path | None, str]:
     """
-    Busca y valida los PDFs de Glosa. Ahora es más flexible: puede proceder
-    solo con la carta si la respuesta no se encuentra.
+    Busca y valida los PDFs de Glosa de forma estricta.
+    Solo procederá si encuentra tanto la carta de glosa como la respuesta de glosa.
     """
     subfolder_path = subfolder_path.resolve()
     log_prefix = f"[{nombre_subcarpeta}] "
-    log_messages = [f"{log_prefix}Validando PDFs (Lógica Flexible)..."]
-    
-    ignorar_carta_faltante = "sin carta glosa" in nombre_subcarpeta.lower()
-    if ignorar_carta_faltante: log_messages.append(f"{log_prefix}  -> DETECTADO: 'sin carta glosa'.")
+    log_messages = [f"{log_prefix}Validando PDFs (Lógica Estricta)... "]
 
+    # Patrones de búsqueda para ambos archivos
     respuesta_glosa_pattern = re.compile(r"^(FECR|COEX|FERD|FERR|FCR)(\d+)\.pdf$", re.IGNORECASE)
     nombre_escapado = re.escape(nombre_aseguradora_en_pdf)
     carta_glosa_pattern = re.compile(rf".*?([A-Z]+)[_-](\d+)[_-]{nombre_escapado}.*?\.pdf$", re.IGNORECASE)
 
     respuesta_glosa_info = None
-    candidatos_carta_glosa = []
+    carta_glosa_info = None
 
     try:
         # --- Búsqueda ---
         for item in subfolder_path.iterdir():
-            if not item.is_file(): continue
+            if not item.is_file() or item.name.upper() == "RAD.PDF":
+                continue
+            
             filename = item.name
-            if filename.upper() == "RAD.PDF": continue
 
+            # Buscar la respuesta de glosa
             if not respuesta_glosa_info:
                 match_respuesta = respuesta_glosa_pattern.match(filename)
                 if match_respuesta:
                     codigo = f"{match_respuesta.group(1).upper()}{match_respuesta.group(2)}"
                     respuesta_glosa_info = {"path": item, "filename": filename, "codigo": codigo}
                     log_messages.append(f"{log_prefix}  -> Encontrada Respuesta Glosa: '{filename}'")
-            
-            match_carta = carta_glosa_pattern.search(filename)
-            if match_carta:
-                codigo = f"{match_carta.group(1).upper()}{match_carta.group(2)}"
-                candidatos_carta_glosa.append({"path": item, "filename": filename, "codigo_limpio": codigo})
-                log_messages.append(f"{log_prefix}  -> Encontrada Carta Glosa: '{filename}'")
 
-        # --- NUEVA LÓGICA DE VALIDACIÓN FLEXIBLE ---
-        
-        # Primero, verificar que al menos UNO de los dos se haya encontrado.
-        if not respuesta_glosa_info and not candidatos_carta_glosa:
-            return None, None, f"{log_prefix}ERROR: No se encontró NI Respuesta Glosa NI Carta Glosa."
-        
-        # Ahora, decidimos cuál archivo y código usar.
-        if respuesta_glosa_info:
-            # CASO 1: Tenemos la respuesta. Es nuestra prioridad para subir.
-            path_a_cargar = respuesta_glosa_info["path"]
-            codigo_de_respuesta = respuesta_glosa_info["codigo"]
-            log_messages.append(f"{log_prefix}  -> Archivo a cargar: {path_a_cargar.name}")
+            # Buscar la carta de glosa
+            if not carta_glosa_info:
+                match_carta = carta_glosa_pattern.search(filename)
+                if match_carta:
+                    codigo = f"{match_carta.group(1).upper()}{match_carta.group(2)}"
+                    carta_glosa_info = {"path": item, "filename": filename, "codigo_limpio": codigo}
+                    log_messages.append(f"{log_prefix}  -> Encontrada Carta Glosa: '{filename}'")
 
-            if candidatos_carta_glosa:
-                # Subcaso 1.1: Tenemos ambos. El código de la carta manda.
-                codigo_final = candidatos_carta_glosa[0]["codigo_limpio"]
-                log_messages.append(f"{log_prefix}  -> Ambos archivos presentes. Código final se toma de la Carta: '{codigo_final}'")
-            else:
-                # Subcaso 1.2: Solo tenemos la respuesta. Su código es el que vale.
-                codigo_final = codigo_de_respuesta
-                log_messages.append(f"{log_prefix}  -> Solo Respuesta encontrada. Código final se toma de la Respuesta: '{codigo_final}'")
-        else:
-            # CASO 2: NO tenemos la respuesta, pero SÍ la carta.
-            log_messages.append(f"{log_prefix}ADVERTENCIA: No se encontró Respuesta Glosa, se usará la Carta Glosa en su lugar.")
-            carta_seleccionada = candidatos_carta_glosa[0]
-            path_a_cargar = carta_seleccionada["path"]
-            codigo_final = carta_seleccionada["codigo_limpio"]
-            log_messages.append(f"{log_prefix}  -> Archivo a cargar: {path_a_cargar.name}")
-            log_messages.append(f"{log_prefix}  -> Código final se toma de la Carta: '{codigo_final}'")
+        # --- LÓGICA DE VALIDACIÓN ESTRICTA ---
+        
+        # 1. Validar que ambos archivos se hayan encontrado
+        if not respuesta_glosa_info:
+            return None, None, f"{log_prefix}ERROR: No se encontró el archivo de Respuesta de Glosa."
+        
+        if not carta_glosa_info:
+            return None, None, f"{log_prefix}ERROR: No se encontró el archivo de Carta de Glosa."
+
+        # 2. Si ambos existen, se usa el código de la CARTA y el path de la RESPUESTA.
+        codigo_final = carta_glosa_info["codigo_limpio"]
+        path_a_cargar = respuesta_glosa_info["path"]
+        
+        log_messages.append(f"{log_prefix}  -> Validación estricta superada. Ambos archivos presentes.")
+        log_messages.append(f"{log_prefix}  -> Archivo a cargar: {path_a_cargar.name}")
+        log_messages.append(f"{log_prefix}  -> Código a usar (de la carta): {codigo_final}")
 
         return codigo_final, path_a_cargar, "\n".join(log_messages)
 

@@ -9,7 +9,7 @@ from playwright.sync_api import Page, expect, TimeoutError as PlaywrightTimeoutE
 
 try:
     from Configuracion.constantes import *
-    from Core.utilidades import encontrar_y_validar_pdfs
+    from Core.utilidades import encontrar_y_validar_pdfs, guardar_screenshot_de_error
 except ImportError as e:
     raise ImportError(f"ERROR CRITICO: No se pudieron importar constantes: {e}")
 
@@ -69,7 +69,8 @@ def login(page: Page) -> tuple[bool, str]:
     except Exception as e:
         error_msg = f"ERROR inesperado durante el login en AXA SOAT: {e}"
         logs.append(error_msg); traceback.print_exc()
-        page.screenshot(path="error_login_axa.png")
+        log_screenshot = guardar_screenshot_de_error(page, "error_login_axa")
+        logs.append(log_screenshot)
         return False, "\n".join(logs)
 
 
@@ -122,7 +123,8 @@ def llenar_formulario(page: Page, codigo_factura: str) -> tuple[bool, str]:
     except Exception as e:
         error_msg = f"ERROR inesperado al llenar el formulario de AXA: {e}"
         logs.append(error_msg); traceback.print_exc()
-        page.screenshot(path="error_formulario_axa.png")
+        log_screenshot = guardar_screenshot_de_error(page, "error_formulario_axa")
+        logs.append(log_screenshot)
         return False, "\n".join(logs)
     
 def navegar_a_inicio(page: Page) -> tuple[bool, str]:
@@ -165,10 +167,11 @@ def subir_archivo_respuesta(page: Page, pdf_path: Path) -> tuple[bool, str]:
     except Exception as e:
         error_msg = f"  -> ERROR al subir el archivo: {e}"
         logs.append(error_msg); traceback.print_exc()
-        page.screenshot(path="error_subida_archivo_axa.png")
+        log_screenshot = guardar_screenshot_de_error(page, "error_subida_archivo_axa")
+        logs.append(log_screenshot)
         return False, "\n".join(logs)
 
-def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str) -> tuple[str, str | None, str | None, str]:
+def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, context: str = 'default') -> tuple[str, str | None, str | None, str]:
     """
     Orquestador web para AXA: filtra, valida, llena formulario y lo envía.
     NO se encarga de la lógica de email; solo devuelve el radicado para la cola.
@@ -277,5 +280,6 @@ def enviar_y_finalizar_radicado(page: Page) -> tuple[str | None, str]:
             
     except Exception as e:
         error_msg = f"  -> ERROR en la finalización: {e}"; traceback.print_exc()
-        page.screenshot(path="error_finalizacion_axa.png")
+        log_screenshot = guardar_screenshot_de_error(page, "error_finalizacion_axa")
+        logs.append(log_screenshot)
         return None, "\n".join(logs + [error_msg])

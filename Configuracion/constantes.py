@@ -19,6 +19,9 @@ APP_VERSION = "0.3"
 AREA_GLOSAS_ID = "glosas"
 AREA_FACTURACION_ID = "facturacion"
 
+#API de GEMA
+MUNDIAL_ESCOLAR_API_BASE_URL = 'https://asotrauma.ngrok.app/api-busqueda-gema/public/api'
+
 
 # ==============================================================================
 # 2. CONSTANTES POR ASEGURADORA

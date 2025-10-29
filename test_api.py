@@ -68,7 +68,7 @@ def query_api_gema(sql_query: str) -> list:
 if __name__ == "__main__":
     # ¡MUY IMPORTANTE! La consulta NO debe incluir la palabra "SELECT".
     # Cambia esta consulta por una que funcione con tu base de datos.
-    mi_consulta = "codigo, vr_glosa, motivo_res FROM [gema10.d/salud/datos/glo_det] WHERE gl_docn =   174118 and estatus1='C1'" # Ejemplo: obtén los primeros 5 usuarios
+    mi_consulta = "gl_docn, gl_fecha FROM [gema10.d/salud/datos/glo_cab] WHERE fc_serie = 'FECR' AND fc_docn = 285412 ORDER BY gl_fecha DESC" # Ejemplo: obtén los primeros 5 usuarios
 
     try:
         # Llamamos a la función con nuestra consulta

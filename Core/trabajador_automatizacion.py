@@ -251,128 +251,69 @@ class TrabajadorAutomatizacion(QtCore.QObject):
             self.finalizado.emit(exitos, fallos, omit_rad, omit_dup, email_fallos_count)
 
     def run_mundial_escolar_automation(self):
-        self.progreso_update.emit("--- INICIANDO AUTOMATIZACIÓN MUNDIAL ESCOLAR ---")
+        self.progreso_update.emit("--- INICIANDO MODO DE PRUEBA DE LÓGICA (SIN NAVEGADOR) ---")
         start_time = time.time()
         exitos, fallos, omitidos = 0, 0, 0
 
         try:
-            # 1. Clasificar carpetas y preparar los datos de cada glosa
+            # Esta parte no cambia: clasificación, ordenamiento y preparación de datos
             sede_1, sede_2, no_reconocidas = separar_carpetas_por_sede(self.carpeta_contenedora_path)
             omitidos = len(no_reconocidas)
 
-            # Preparar campo 'factura_completa' que será usado en la búsqueda
+            try:
+                sede_1.sort(key=lambda glosa: int(glosa['factura']))
+                sede_2.sort(key=lambda glosa: int(glosa['factura']))
+                self.progreso_update.emit("[INFO] Listas de glosas ordenadas por número de factura.")
+            except (ValueError, KeyError) as e:
+                self.progreso_update.emit(f"[ADVERTENCIA] No se pudo ordenar las listas de glosas: {e}")
+
             for glosa_list in [sede_1, sede_2]:
                 for glosa in glosa_list:
                     glosa['factura_completa'] = f"{glosa['prefijo'].strip()}{glosa['factura'].strip()}"
 
-            # --- Logging de carpetas clasificadas ---
-            self.progreso_update.emit("\n--- Clasificación de Carpetas ---")
+            self.progreso_update.emit("\n--- Clasificación de Carpetas (ordenadas) ---")
             self.progreso_update.emit(f"Sede 1 ({len(sede_1)} carpetas): " + ", ".join([os.path.basename(g['ruta']) for g in sede_1]))
             self.progreso_update.emit(f"Sede 2 ({len(sede_2)} carpetas): " + ", ".join([os.path.basename(g['ruta']) for g in sede_2]))
-            if no_reconocidas:
-                self.progreso_update.emit(f"Omitidas/No Reconocidas ({omitidos} carpetas): " + ", ".join([os.path.basename(g['ruta']) for g in no_reconocidas]))
-                for glosa_omitida in no_reconocidas:
-                    motivo = "Omitida por formato de nombre no reconocido."
-                    self.reporte_omitidos.append(f"Carpeta: {os.path.basename(glosa_omitida['ruta']):<20} -> {motivo}")
+            # ... resto del log de clasificación ...
 
-            # 2. Iniciar el navegador con Playwright
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=self.headless_mode, slow_mo=50)
-                page = browser.new_page()
+            # --- MODO DE PRUEBA: SOLO LLAMADAS A LA API Y LÓGICA ---
+            self.progreso_update.emit("\n--- EJECUTANDO DIAGNÓSTICO DE DATOS ---")
+            
+            # Combinamos ambas sedes en una sola lista para la prueba
+            todas_las_glosas = sede_1 + sede_2
 
-                # --- 3. PROCESAMIENTO SEDE 2 ---
-                if sede_2:
-                    self.progreso_update.emit("\n--- PROCESANDO SEDE 2 ---")
-                    login_ok, login_log = mundial_escolar.login(page, MUNDIAL_ESCOLAR_SEDE2_USER, MUNDIAL_ESCOLAR_SEDE2_PASS)
-                    self.progreso_update.emit(login_log)
-                    
-                    if login_ok:
-                        nav_ok, nav_log, iframe = mundial_escolar.navegar_a_inicio(page)
-                        self.progreso_update.emit(nav_log)
-                        
-                        if nav_ok and iframe:
-                            for glosa in sede_2:
-                                self.progreso_update.emit(f"\nProcesando glosa de carpeta: {os.path.basename(glosa['ruta'])}")
-                                # CORRECCIÓN AQUÍ: Pasamos 'page' como primer argumento
-                                puede_continuar, log_proceso = mundial_escolar.procesar_factura(page, iframe, glosa, glosa['ruta'])
-                                self.progreso_update.emit(log_proceso)
-                                
-                                if puede_continuar:
-                                    self.progreso_update.emit(f"  -> Se procederá a radicar glosa para {glosa['factura_completa']}...")
-                                    exitos += 1
-                                    self.resultados_exitosos.append({"subcarpeta": os.path.basename(glosa['ruta']), "factura": glosa['factura_completa'], "radicado": "RADICADO_PENDIENTE"})
-                                else:
-                                    self.progreso_update.emit(f"  -> FALLO DOCUMENTADO: La glosa para {glosa['factura_completa']} no se puede procesar.")
-                                    fallos += 1
-                                    self.reporte_fallos.append(log_proceso)
-                        else:
-                            self.progreso_update.emit("[ERROR] No se pudo navegar al formulario de Sede 2. Se omitirán todas las glosas de esta sede.")
-                            fallos += len(sede_2)
-                    else:
-                        self.progreso_update.emit("[ERROR] Login fallido para Sede 2. Se omitirán todas las glosas de esta sede.")
-                        fallos += len(sede_2)
+            if not todas_las_glosas:
+                self.progreso_update.emit("No hay glosas para diagnosticar.")
+            
+            for glosa in todas_las_glosas:
+                self.progreso_update.emit(f"\nProcesando glosa de carpeta: {os.path.basename(glosa['ruta'])}")
                 
-                # --- PASO DE REINICIO DE SESIÓN ---
-                if sede_2 and sede_1:
-                    self.progreso_update.emit("\n--- REINICIANDO SESIÓN PARA CAMBIO DE SEDE ---")
-                    try:
-                        page.goto(MUNDIAL_ESCOLAR_URL, timeout=45000)
-                        self.progreso_update.emit("Página de login recargada para la siguiente sede.")
-                    except Exception as e_reload:
-                        self.progreso_update.emit(f"[ERROR CRÍTICO] No se pudo recargar la página de login. Abortando Sede 1. Error: {e_reload}")
-                        fallos += len(sede_1)
-                        sede_1 = []
-
-                # --- 4. PROCESAMIENTO SEDE 1 ---
-                if sede_1:
-                    self.progreso_update.emit("\n--- PROCESANDO SEDE 1 ---")
-                    login_ok, login_log = mundial_escolar.login(page, MUNDIAL_ESCOLAR_SEDE1_USER, MUNDIAL_ESCOLAR_SEDE1_PASS)
-                    self.progreso_update.emit(login_log)
-                    
-                    if login_ok:
-                        nav_ok, nav_log, iframe = mundial_escolar.navegar_a_inicio(page)
-                        self.progreso_update.emit(nav_log)
-                        
-                        if nav_ok and iframe:
-                            for glosa in sede_1:
-                                self.progreso_update.emit(f"\nProcesando glosa de carpeta: {os.path.basename(glosa['ruta'])}")
-                                # CORRECCIÓN AQUÍ: Pasamos 'page' como primer argumento
-                                puede_continuar, log_proceso = mundial_escolar.procesar_factura(page, iframe, glosa, glosa['ruta'])
-                                self.progreso_update.emit(log_proceso)
-                                
-                                if puede_continuar:
-                                    self.progreso_update.emit(f"  -> Se procederá a radicar glosa para {glosa['factura_completa']}...")
-                                    exitos += 1
-                                    self.resultados_exitosos.append({"subcarpeta": os.path.basename(glosa['ruta']), "factura": glosa['factura_completa'], "radicado": "RADICADO_PENDIENTE"})
-
-                                else:
-                                    self.progreso_update.emit(f"  -> FALLO DOCUMENTADO: La glosa para {glosa['factura_completa']} no se puede procesar.")
-                                    fallos += 1
-                                    self.reporte_fallos.append(log_proceso)
-                        else:
-                            self.progreso_update.emit("[ERROR] No se pudo navegar al formulario de Sede 1. Se omitirán todas las glosas de esta sede.")
-                            fallos += len(sede_1)
-                    else:
-                        self.progreso_update.emit("[ERROR] Login fallido para Sede 1. Se omitirán todas las glosas de esta sede.")
-                        fallos += len(sede_1)
+                # Llamada a la nueva función de diagnóstico
+                es_radicable, log_diagnostico, lote_para_procesar = mundial_escolar.diagnosticar_factura_desde_gema(glosa)
                 
-                browser.close()
+                # Imprimimos el resultado del diagnóstico
+                self.progreso_update.emit(log_diagnostico)
+                
+                if es_radicable:
+                    self.progreso_update.emit("  -> Veredicto: PROCEDER A RADICACIÓN (cuando se active el navegador).")
+                    exitos += 1
+                else:
+                    self.progreso_update.emit("  -> Veredicto: NO RADICAR / OMITIR.")
+                    fallos += 1 # Contamos los "no radicables" como fallos en esta prueba
 
         except Exception as e:
-            self.error_critico.emit(f"!!! ERROR CRÍTICO !!!\nERROR CRÍTICO DURANTE AUTOMATIZACIÓN MUNDIAL ESCOLAR:\n{e}\n{traceback.format_exc()}")
+            self.error_critico.emit(f"!!! ERROR CRÍTICO !!!\nERROR CRÍTICO DURANTE MODO DE PRUEBA:\n{e}\n{traceback.format_exc()}")
         
         finally:
-            # Esta sección se ejecuta siempre, incluso si hay un error crítico.
             total_time = time.time() - start_time
             tiempo_formateado = self._formatear_tiempo(total_time)
             
             summary_msg = (
-                f"\n--- FIN DEL PROCESO MUNDIAL ESCOLAR ---\n"
-                f"Éxitos: {exitos}\n"
-                f"Fallos: {fallos}\n"
-                f"Omitidas: {omitidos}\n"
+                f"\n--- FIN DEL MODO DE PRUEBA ---\n"
+                f"Facturas Radicables: {exitos}\n"
+                f"Facturas No Radicables/Error: {fallos}\n"
+                f"Omitidas (nombre de carpeta): {omitidos}\n"
                 f"Tiempo Total: {tiempo_formateado}"
             )
             self.progreso_update.emit(summary_msg)
-            # Emitimos la señal final para la GUI
             self.finalizado.emit(exitos, fallos, omitidos, 0, 0)
