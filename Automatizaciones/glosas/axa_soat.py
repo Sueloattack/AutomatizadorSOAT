@@ -74,7 +74,7 @@ def login(page: Page) -> tuple[bool, str]:
         return False, "\n".join(logs)
 
 
-def llenar_formulario(page: Page, codigo_factura: str) -> tuple[bool, str]:
+def llenar_formulario(page: Page, codigo_factura: str, context: str = 'default') -> tuple[bool, str]:
     """Llena los campos del formulario de radicación de AXA."""
     logs = ["Llenando formulario de radicación..."]
     try:
@@ -83,8 +83,14 @@ def llenar_formulario(page: Page, codigo_factura: str) -> tuple[bool, str]:
         logs.append(f"  - NIT Ramo SOAT: {AXASOAT_NIT_RAMO_FORM}")
 
         # Seleccionar Tipo de Cuenta
-        page.locator(AXASOAT_SELECTOR_TIPO_CUENTA).select_option(label=AXASOAT_TIPO_CUENTA_FORM_RESPUESTA_OBJECION)
-        logs.append(f"  - Tipo de cuenta: '{AXASOAT_TIPO_CUENTA_FORM_RESPUESTA_OBJECION}'")
+        if context == "aceptadas":
+            tipo_cuenta_label = AXASOAT_TIPO_CUENTA_FORM_RESPUESTA_LIQUIDACION
+            logs.append(f"  - Contexto 'aceptadas' detectado. Tipo de cuenta: '{tipo_cuenta_label}'")
+        else:
+            tipo_cuenta_label = AXASOAT_TIPO_CUENTA_FORM_RESPUESTA_OBJECION
+            logs.append(f"  - Usando Tipo de cuenta por defecto: '{tipo_cuenta_label}'")
+        
+        page.locator(AXASOAT_SELECTOR_TIPO_CUENTA).select_option(label=tipo_cuenta_label)
         
         # Llenar Fecha de Atención
         today_str = datetime.now().strftime("%Y-%m-%d")

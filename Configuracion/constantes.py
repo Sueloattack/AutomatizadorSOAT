@@ -131,6 +131,7 @@ AXASOAT_SELECTOR_MODAL_ACEPTAR = "button:has-text('Aceptar')"
 AXASOAT_SELECTOR_FORMULARIO_VERIFY = "input[selector='nitramo_selector']"  # Elemento clave para verificar carga
 AXASOAT_NIT_RAMO_FORM = "8600021846"
 AXASOAT_TIPO_CUENTA_FORM_RESPUESTA_OBJECION = "Respuesta a una objeción"
+AXASOAT_TIPO_CUENTA_FORM_RESPUESTA_LIQUIDACION = "Respuesta de liquidación de pago"
 AXASOAT_CORREO_FORM = "radicacionglosa@asotrauma.com.co"
 AXASOAT_USUARIO_REGISTRA_FORM = "DIANA CAROLINA GIRALDO"
 AXASOAT_SELECTOR_NIT_RAMO = "input[selector='nitramo_selector']"
