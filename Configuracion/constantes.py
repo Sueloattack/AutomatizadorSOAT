@@ -77,6 +77,7 @@ PREVISORA_XPATH_POPUP_ENVIO_SI_CONTINUAR = "//div[contains(@class, 'jconfirm') a
 PREVISORA_XPATH_POPUP_CONTINUAR_GUARDAR = "//div[contains(@class, 'jconfirm') and contains(@class, 'jconfirm-open')]//button[contains(@class, 'btn-green') and contains(translate(normalize-space(text()), 'CG', 'cg'), 'continuar y guardar')]"
 PREVISORA_XPATH_FINAL_CONFIRMATION_POPUP_CONTAINER = "//div[contains(@class, 'jconfirm-open')]//div[contains(@class, 'jconfirm-box') and contains(@class, 'jconfirm-type-green')][.//span[contains(@class,'jconfirm-title')]//b[contains(text(),'Registro Generado')]]"
 PREVISORA_XPATH_BOTON_NUEVA_RECLAMACION = "//div[contains(@class, 'jconfirm-open')]//button[contains(@class, 'btn-green') and normalize-space(text())='Generar una nueva reclamación']"
+PREVISORA_XPATH_BOTON_VOLVER_INTENTAR = "//button[contains(., 'Volver a Intentar')]"
 
 # --- Sub-sección: Selectores para FACTURACIÓN (Previsora) ---
 PREVISORA_VALUE_TIPO_CUENTA_FACTURACION = "1"  # "Factura presentada por primera vez"
@@ -202,7 +203,6 @@ PALABRAS_EXCLUSION_CARPETAS = [
 CONFIGURACION_AREAS = {
     AREA_GLOSAS_ID: [
         (PREVISORA_NOMBRE, PREVISORA_ID),
-        (MUNDIAL_NOMBRE, MUNDIAL_ID),
         (AXASOAT_NOMBRE, AXASOAT_ID),
         (MUNDIAL_ESCOLAR_NOMBRE, MUNDIAL_ESCOLAR_ID),
     ],

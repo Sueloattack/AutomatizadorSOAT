@@ -48,8 +48,12 @@ def encontrar_y_validar_pdfs(
 
     # Patrones de búsqueda para ambos archivos
     respuesta_glosa_pattern = re.compile(r"^(FECR|COEX|FERD|FERR|FCR)(\d+)\.pdf$", re.IGNORECASE)
-    nombre_escapado = re.escape(nombre_aseguradora_en_pdf)
-    carta_glosa_pattern = re.compile(rf".*?([A-Z]+)[_-](\d+)[_-]{nombre_escapado}.*?\.pdf$", re.IGNORECASE)
+    
+    # MODIFICADO: Regex relajado para Carta Glosa.
+    # Ya no forzamos que contenga 'nombre_aseguradora_en_pdf' exacto, 
+    # sino que buscamos la estructura PREFIJO_NUMERO_... .pdf
+    # Esto evita fallos por espacios, puntos o variaciones en el nombre de la aseguradora.
+    carta_glosa_pattern = re.compile(r".*?([A-Z]+)[_-](\d+)[_-].*?\.pdf$", re.IGNORECASE)
 
     respuesta_glosa_info = None
     carta_glosa_info = None
@@ -169,52 +173,74 @@ def consolidar_radicados_pdf(carpeta_contenedora: Path, nombre_salida: str = "RA
     """
     Busca todos los archivos RAD.pdf individuales dentro de las subcarpetas,
     los une en un solo archivo PDF maestro y elimina los archivos individuales.
-
-    Args:
-        carpeta_contenedora: La carpeta principal (ej. 'CUENTA 66553')
-        nombre_salida: El nombre del archivo PDF unificado final.
-
-    Returns:
-        (éxito, mensaje_log)
+    
+    SOPORTE INCREMENTAL: Si ya existe un 'RADICADO.pdf', lo incluye en la unión
+    para no perder los radicados anteriores.
     """
     logs = [f"\n--- Iniciando Consolidación de Radicados en: {carpeta_contenedora.name} ---"]
     pdfs_a_unir = []
+    ruta_salida = carpeta_contenedora / nombre_salida
+    ruta_temp_previo = carpeta_contenedora / "RADICADO_PREVIO_TEMP.pdf"
 
-    # 1. Buscar recursivamente todos los RAD.pdf en las subcarpetas
+    # 1. Verificar si ya existe un consolidado previo
+    if ruta_salida.exists():
+        try:
+            # Renombrar el existente para usarlo como input
+            if ruta_temp_previo.exists():
+                ruta_temp_previo.unlink() # Limpieza por si acaso
+            
+            ruta_salida.rename(ruta_temp_previo)
+            pdfs_a_unir.append(ruta_temp_previo)
+            logs.append(f"Se encontró un '{nombre_salida}' previo. Se incluirá en la consolidación.")
+        except Exception as e:
+            logs.append(f"ADVERTENCIA: No se pudo procesar el archivo previo '{nombre_salida}': {e}")
+
+    # 2. Buscar recursivamente todos los RAD.pdf en las subcarpetas
+    nuevos_rads = []
     for subfolder in carpeta_contenedora.iterdir():
         if subfolder.is_dir():
             rad_file = subfolder / "RAD.pdf"
             if rad_file.is_file():
-                pdfs_a_unir.append(rad_file)
+                nuevos_rads.append(rad_file)
 
-    if not pdfs_a_unir:
-        return True, "\n".join(logs + ["No se encontraron archivos RAD.pdf para consolidar. Proceso omitido."])
+    if not nuevos_rads and not pdfs_a_unir:
+        return True, "\n".join(logs + ["No se encontraron archivos RAD.pdf nuevos ni previos. Proceso omitido."])
 
-    logs.append(f"Se encontraron {len(pdfs_a_unir)} archivos RAD.pdf para unir.")
-    pdfs_a_unir.sort() # Ordenar alfabéticamente por ruta, lo que usualmente ordena por número de subcarpeta
+    nuevos_rads.sort() # Ordenar nuevos alfabéticamente
+    pdfs_a_unir.extend(nuevos_rads) # Agregar los nuevos después del previo
+
+    logs.append(f"Se consolidarán {len(pdfs_a_unir)} archivos PDF (Previo + {len(nuevos_rads)} nuevos).")
     
     merger = PdfWriter()
     
     try:
-        # 2. Leer y añadir cada PDF al objeto 'merger'
+        # 3. Leer y añadir cada PDF al objeto 'merger'
         for pdf_path in pdfs_a_unir:
             merger.append(str(pdf_path))
         
-        # 3. Guardar el archivo unificado
-        ruta_salida = carpeta_contenedora / nombre_salida
+        # 4. Guardar el archivo unificado
         with open(ruta_salida, "wb") as f_out:
             merger.write(f_out)
         
         logs.append(f"¡ÉXITO! Archivo consolidado guardado como '{ruta_salida.name}'.")
         merger.close()
 
-        # 4. (Opcional pero recomendado) Limpiar los archivos RAD.pdf individuales
-        for pdf_path in pdfs_a_unir:
+        # 5. Limpieza
+        # Eliminar el temporal previo
+        if ruta_temp_previo.exists():
+            try:
+                ruta_temp_previo.unlink()
+            except:
+                pass
+        
+        # Eliminar los archivos RAD.pdf individuales nuevos
+        for pdf_path in nuevos_rads:
             try:
                 pdf_path.unlink()
             except OSError as e:
                 logs.append(f"ADVERTENCIA: No se pudo eliminar el archivo individual {pdf_path.name}: {e}")
-        logs.append("Archivos RAD.pdf individuales eliminados.")
+        
+        logs.append("Archivos RAD.pdf individuales eliminados y temporal limpiado.")
         
         return True, "\n".join(logs)
 
@@ -222,6 +248,13 @@ def consolidar_radicados_pdf(carpeta_contenedora: Path, nombre_salida: str = "RA
         error_msg = f"ERROR CRÍTICO durante la consolidación de PDFs: {e}"
         traceback.print_exc()
         if 'merger' in locals(): merger.close()
+        # Intentar restaurar el previo si falló
+        if ruta_temp_previo.exists() and not ruta_salida.exists():
+            try:
+                ruta_temp_previo.rename(ruta_salida)
+                logs.append("Se restauró el archivo previo original debido al fallo.")
+            except:
+                pass
         return False, "\n".join(logs + [error_msg])
 
 def encontrar_documentos_facturacion_axa(subfolder_path: Path, nombre_subcarpeta: str) -> tuple[str | None, str | None, dict[str, Path] | None, str]:
@@ -376,4 +409,3 @@ def separar_carpetas_por_sede(carpeta_raiz):
                 no_reconocidas.append({"ruta": ruta_completa, "prefijo": None, "factura": None})
     
     return sede_1, sede_2, no_reconocidas
-    

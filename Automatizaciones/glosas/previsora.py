@@ -23,6 +23,63 @@ ESTADO_FALLO = "FALLO"
 ESTADO_OMITIDO_RADICADO = "OMITIDO_RADICADO"
 ESTADO_OMITIDO_DUPLICADA = "OMITIDO_DUPLICADA"
 
+def manejar_popups_intrusivos(page: Page, logs: list) -> bool:
+    """
+    Intenta detectar y cerrar pop-ups genéricos o de error que bloquean la UI.
+    Retorna True si cerró algo, False si no.
+    """
+    # Lista de selectores de botones de cierre/aceptar en popups conocidos
+    # USAMOS TEXTO EXACTO O REGEX PARA EVITAR FALSOS POSITIVOS (ej. "Sí, continuar")
+    selectores_cierre = [
+        "button:has-text('Aceptar')",
+        "button:has-text('Cerrar')",
+        "button:has-text('Entendido')",
+        # Selector estricto para "CONTINUAR" (evita "Sí, continuar")
+        "button:text-is('CONTINUAR')", 
+        PREVISORA_XPATH_POPUP_FACTURA_CONTINUAR, # El específico de "Factura ya existe"
+        "div.ui-dialog-buttonset button" # Botones genéricos de diálogos jQuery UI
+    ]
+    
+    accion_realizada = False
+    for selector in selectores_cierre:
+        try:
+            # Verificación rápida (200ms) para no ralentizar el flujo normal
+            if page.locator(selector).is_visible(timeout=200):
+                page.locator(selector).click()
+                logs.append(f"    [POPUP] Cerrado popup con selector: {selector}")
+                accion_realizada = True
+                # Pequeña espera para que la animación de cierre termine
+                page.wait_for_timeout(500)
+        except:
+            pass
+    return accion_realizada
+
+def manejar_error_conectividad(page: Page, logs: list) -> bool:
+    """
+    Detecta si apareció la página de 'ERROR DE CONECTIVIDAD' y trata de recuperarse.
+    Retorna True si se detectó y se intentó recuperar, False si no.
+    """
+    try:
+        # Buscamos el botón 'Volver a Intentar' o el texto de error
+        btn_volver = page.locator(PREVISORA_XPATH_BOTON_VOLVER_INTENTAR)
+        if btn_volver.is_visible(timeout=1000):
+            logs.append("    [ALERTA] Detectada página de 'ERROR DE CONECTIVIDAD'.")
+            logs.append("    -> Intentando recuperar sesión con botón 'Volver a Intentar'...")
+            btn_volver.click()
+            
+            # Esperar a que la página intente recargar y volver al formulario
+            try:
+                # Esperamos que aparezca el input de factura como señal de éxito
+                expect(page.locator(f"#{PREVISORA_ID_FACTURA_FORM}")).to_be_visible(timeout=30000)
+                logs.append("    -> Recuperación exitosa. Formulario visible nuevamente.")
+                return True
+            except:
+                logs.append("    -> Falló la recuperación automática. Se intentará recarga completa en el siguiente ciclo.")
+                return True # Retornamos True porque SÍ detectamos el error, aunque la recuperación fallara
+    except:
+        pass
+    return False
+
 def _verificar_pagina_activa(page: Page):
     """
     Verifica rápidamente si los elementos clave del formulario de radicación están presentes.
@@ -83,31 +140,85 @@ def llenar_formulario_previsora(page: Page, codigo_factura: str, context: str = 
     """Llena el formulario con los datos de la factura."""
     logs = [f"  Llenando formulario (Factura: {codigo_factura})..."]
     try:
+        # 1. LIMPIEZA INICIAL: Cerrar cualquier popup residual de intentos anteriores
+        manejar_popups_intrusivos(page, logs)
+        
+        # Si hay un popup de "Confirmación" (Sí, continuar) residual, lo cerramos con CANCELAR para no enviar nada
+        btn_cancelar_residual = page.locator("button:has-text('cancel')")
+        if btn_cancelar_residual.is_visible(timeout=500):
+            btn_cancelar_residual.click()
+            logs.append("    [LIMPIEZA] Cerrado popup residual de Confirmación (Cancel).")
+            page.wait_for_timeout(500)
+
         dropdown_ciudad_container = page.locator(f"//input[@id='{PREVISORA_ID_CIUDAD_HIDDEN_FORM}']/..")
         opcion_ciudad = page.locator(PREVISORA_XPATH_CIUDAD_OPCION)
         factura_input = page.locator(f"#{PREVISORA_ID_FACTURA_FORM}")
         
+        # Esperar a que el formulario sea interactuable
+        expect(dropdown_ciudad_container).to_be_visible(timeout=20000)
+
         logs.append("    - Abriendo dropdown de Ciudad...")
         dropdown_ciudad_container.click()
         logs.append(f"    - Seleccionando '{PREVISORA_CIUDAD_FORM_NOMBRE}'...")
+        # Esperar a que la opción aparezca
+        expect(opcion_ciudad).to_be_visible(timeout=5000)
         opcion_ciudad.click()
         logs.append("    - Ciudad OK.")
 
         factura_input.fill(codigo_factura)
+        # Disparar validación (Tab)
+        page.keyboard.press("Tab")
+
+        # --- VERIFICACIÓN DE DUPLICADOS (LÓGICA REFINADA) ---
+        # Esperamos un momento (1s) para que el sitio procese y muestre el popup si es necesario.
+        page.wait_for_timeout(1000)
+
+        popup_duplicado = page.locator("div.jconfirm-content:has-text('ya ha sido ingresada')")
+        try:
+            if popup_duplicado.is_visible(timeout=1000):
+                logs.append("    -> DETECTADO POPUP: Aviso de factura ingresada.")
+                # Usamos el selector estricto
+                btn_continuar = page.locator("button:text-is('CONTINUAR')")
+                if btn_continuar.is_visible():
+                    btn_continuar.click()
+                    logs.append("    -> Popup cerrado con botón CONTINUAR.")
+                
+                # --- CRUCIAL: Verificar si el sistema borró el campo ---
+                page.wait_for_timeout(500) # Esperar a que el JS del sitio actúe
+                valor_actual = factura_input.input_value()
+                if not valor_actual:
+                    logs.append("    -> EL SISTEMA BORRÓ EL CAMPO FACTURA. Es un duplicado real.")
+                    return ESTADO_OMITIDO_DUPLICADA, "\n".join(logs)
+                else:
+                    logs.append("    -> El campo factura persiste. Falsa alarma o advertencia no bloqueante. CONTINUANDO.")
+        except:
+            pass # Si no aparece, seguimos
+
         page.locator(f"#{PREVISORA_ID_CORREO_FORM}").fill(PREVISORA_CORREO_FORM)
         page.locator(f"#{PREVISORA_ID_USUARIO_REGISTRA_FORM}").fill(PREVISORA_USUARIO_REGISTRA_FORM)
         page.locator(f"#{PREVISORA_ID_RAMO_FORM}").select_option(label=PREVISORA_RAMO_FORM)
         logs.append("    - Campos principales llenados.")
         
-        try:
-            page.locator(PREVISORA_XPATH_POPUP_FACTURA_CONTINUAR).click(timeout=10000)
-            logs.append("    - Pop-up de factura existente manejado.")
-        except PlaywrightTimeoutError:
-            logs.append("    - Pop-up de factura no apareció, continuando.")
+        # Manejo de Popup "Factura ya existe" o similares (revisión final antes de seguir)
+        page.wait_for_timeout(500) 
+        
+        # Re-verificación por si acaso saltó tarde
+        if popup_duplicado.is_visible(timeout=1000):
+            logs.append("    -> DETECTADO POPUP (Tardío): Aviso de factura ingresada.")
+            btn_continuar = page.locator("button:text-is('CONTINUAR')")
+            if btn_continuar.is_visible():
+                btn_continuar.click()
+            
+            page.wait_for_timeout(500)
+            if not factura_input.input_value():
+                logs.append("    -> EL SISTEMA BORRÓ EL CAMPO FACTURA. Es un duplicado real.")
+                return ESTADO_OMITIDO_DUPLICADA, "\n".join(logs)
 
-        time.sleep(0.5)
+        manejar_popups_intrusivos(page, logs)
+
+        # Verificación final de campo vacío (por si acaso)
         if not factura_input.input_value():
-            logs.append("    -> CAMPO FACTURA VACÍO. Omitiendo por duplicado.")
+            logs.append("    -> CAMPO FACTURA VACÍO. Posible duplicado o error de carga.")
             return ESTADO_OMITIDO_DUPLICADA, "\n".join(logs)
 
         page.locator(f"#{PREVISORA_ID_AMPAROS_FORM}").select_option(value=PREVISORA_VALUE_AMPARO_FORM)
@@ -125,13 +236,11 @@ def llenar_formulario_previsora(page: Page, codigo_factura: str, context: str = 
         return ESTADO_EXITO, "\n".join(logs)
     except Exception as e:
         error_msg = f"ERROR inesperado al llenar formulario: {e}"
-        log_screenshot = guardar_screenshot_de_error(page, f"error_formulario_{codigo_factura}.png")
+        # No tomamos screenshot aquí para no llenar la carpeta de errores en reintentos.
         logs.append(error_msg)
-        logs.append(log_screenshot) # <-- Añadimos la ruta al log
         traceback.print_exc()
         return ESTADO_FALLO, "\n".join(logs)
 
-# --- ESTA FUNCIÓN HA SIDO MODIFICADA ---
 def subir_y_enviar_previsora(page: Page, pdf_path: Path) -> tuple[str, str]:
     """Carga el PDF y maneja el primer pop-up de confirmación."""
     logs = [f"  Subiendo archivo: {pdf_path.name}..."]
@@ -139,6 +248,9 @@ def subir_y_enviar_previsora(page: Page, pdf_path: Path) -> tuple[str, str]:
         page.locator(f"#{PREVISORA_ID_INPUT_FILE_FORM}").set_input_files(pdf_path)
         logs.append("    - Archivo adjuntado.")
         
+        # Manejar cualquier popup que bloquee el botón de enviar
+        manejar_popups_intrusivos(page, logs)
+
         page.locator(f"#{PREVISORA_ID_BOTON_ENVIAR_FORM}").click()
         logs.append("    - Clic en 'Enviar'.")
 
@@ -151,13 +263,11 @@ def subir_y_enviar_previsora(page: Page, pdf_path: Path) -> tuple[str, str]:
         return ESTADO_EXITO, "\n".join(logs)
     except Exception as e:
         error_msg = f"ERROR inesperado al subir o enviar: {e}"
-        log_screenshot = guardar_screenshot_de_error(page, f"error_screenshot_subida_{pdf_path.stem}_{time.strftime('%H%M%S')}.png")
+        # No tomamos screenshot aquí para no llenar la carpeta de errores en reintentos.
         logs.append(error_msg)
-        logs.append(log_screenshot) 
         traceback.print_exc()
         return ESTADO_FALLO, "\n".join(logs)
 
-# --- ESTA FUNCIÓN HA SIDO MODIFICADA ---
 def guardar_confirmacion_previsora(page: Page, output_folder: Path) -> tuple[str | None, str | None, str]:
     """
     Maneja el guardado final de forma adaptativa, reconociendo si el sitio
@@ -200,7 +310,7 @@ def guardar_confirmacion_previsora(page: Page, output_folder: Path) -> tuple[str
                 popup_final = popup_final_confirmacion
                 found_path = True
                 break
-
+            
             page.wait_for_timeout(1000) # Esperar 1 segundo antes de volver a comprobar
 
         if not found_path or not popup_final:
@@ -312,11 +422,15 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, cont
         logs.append(f"ERROR: No se pudo encontrar el archivo {pdf_path} para verificar su tamaño.")
         return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)    
     
-    MAX_ATTEMPTS = 3 # Aumentamos a 3 para más robustez
+    MAX_ATTEMPTS = 5 # Aumentamos a 5 para más robustez (solicitud usuario)
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             logs.append(f"\n--- Intento de radicación #{attempt}/{MAX_ATTEMPTS} ---")
             
+            # --- VIGÍA DE ERROR DE CONECTIVIDAD ---
+            # Antes de cualquier cosa, verificamos si estamos en la pantalla de error
+            manejar_error_conectividad(page, logs)
+
             # --- LÓGICA DE RECARGA PROACTIVA ---
             # A partir del SEGUNDO intento, siempre recargamos la página primero.
             if attempt > 1:
@@ -324,9 +438,20 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, cont
                 page.reload(wait_until="domcontentloaded", timeout=45000)
                 # Opcional: una pequeña espera tras la recarga puede ayudar a estabilizar
                 page.wait_for_timeout(3000) 
+                # Volvemos a chequear error de conectividad tras recarga
+                manejar_error_conectividad(page, logs)
             
             # VERIFICACIÓN DEL VIGÍA #1: ¿La página está bien ANTES de empezar a llenar?
-            _verificar_pagina_activa(page)
+            try:
+                _verificar_pagina_activa(page)
+            except Exception as e_active:
+                logs.append(f"   -> Página no activa/válida: {e_active}")
+                # Si falla la verificación, intentamos ver si es por el error de conectividad
+                if manejar_error_conectividad(page, logs):
+                    logs.append("   -> Se recuperó del error de conectividad. Reintentando verificación...")
+                    _verificar_pagina_activa(page) # Reintentamos verificación
+                else:
+                    raise # Si no era eso, forzamos reintento normal
             
             # --- PASO 1: Llenado de Formulario ---
             logs.append("\n--- PASO 1: Llenado de Formulario ---")
