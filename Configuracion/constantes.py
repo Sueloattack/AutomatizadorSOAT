@@ -19,6 +19,13 @@ APP_VERSION = "0.3"
 AREA_GLOSAS_ID = "glosas"
 AREA_FACTURACION_ID = "facturacion"
 
+# --- IDs de Aseguradoras (Aliases para compatibilidad con Factory) ---
+# NOTA: Los IDs completos están definidos en sus respectivas secciones más abajo
+# PREVISORA_ID ya está definido en línea 35
+# MUNDIAL_ESCOLAR_ID ya está definido en línea 110
+# AXASOAT_ID ya está definido en línea 124
+AXA_SOAT_ID = "axa_soat"  # Alias para AXASOAT_ID
+
 #API de GEMA
 MUNDIAL_ESCOLAR_API_BASE_URL = 'https://asotrauma.ngrok.app/api-busqueda-gema/public/api'
 

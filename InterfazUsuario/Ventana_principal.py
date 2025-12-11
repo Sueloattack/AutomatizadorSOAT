@@ -80,7 +80,8 @@ class TabRadicacion(QtWidgets.QWidget):
     def _crear_grupo_seleccion_carpeta(self):
         self.grupo_seleccion_carpeta = QtWidgets.QGroupBox("3. Seleccionar Carpeta Contenedora")
         layout = QtWidgets.QHBoxLayout(self.grupo_seleccion_carpeta)
-        self.folder_line_edit = QtWidgets.QLineEdit("...")
+        self.folder_line_edit = QtWidgets.QLineEdit()
+        self.folder_line_edit.setPlaceholderText("Seleccione carpeta...") # FIX: Placeholder en vez de "..."
         self.folder_line_edit.setReadOnly(True)
         self.folder_line_edit.setMinimumHeight(28)
         layout.addWidget(self.folder_line_edit, stretch=1)
@@ -105,7 +106,7 @@ class TabRadicacion(QtWidgets.QWidget):
         self.log_text_edit = QtWidgets.QTextEdit()
         self.log_text_edit.setReadOnly(True)
         self.log_text_edit.setLineWrapMode(QtWidgets.QTextEdit.LineWrapMode.NoWrap)
-        log_font = QtGui.QFont("Consolas", 9) or QtGui.QFont("Courier New", 9)
+        log_font = QtGui.QFont("Consolas", 9)
         self.log_text_edit.setFont(log_font)
 
     @QtCore.Slot()
@@ -120,8 +121,10 @@ class TabRadicacion(QtWidgets.QWidget):
     @QtCore.Slot()
     def _seleccionar_carpeta(self):
         directorio_inicial = self.folder_line_edit.text()
-        if not os.path.isdir(directorio_inicial):
+        if not directorio_inicial or not os.path.isdir(directorio_inicial):
             directorio_inicial = os.path.expanduser("~")
+        
+        print(f"DEBUG: Abriendo diálogo en {directorio_inicial}")
         folder_path = QtWidgets.QFileDialog.getExistingDirectory(
             self, "Selecciona CARPETA CONTENEDORA", directorio_inicial
         )
@@ -132,7 +135,7 @@ class TabRadicacion(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def _iniciar_automatizacion(self):
-        # Delegamos la lógica de hilos a la ventana principal para mantener la gestión centralizada
+        print(f"DEBUG: Iniciando automatización para {self.combo_aseguradora.currentText()}")
         self.main_window.iniciar_automatizacion_radicacion(
             self.combo_area.currentData(),
             self.combo_aseguradora.currentData(),
@@ -146,7 +149,7 @@ class TabRadicacion(QtWidgets.QWidget):
     def _actualizar_estado_botones(self, proceso_corriendo: bool):
         habilitar = not proceso_corriendo
         folder_path = self.folder_line_edit.text()
-        es_valida = os.path.isdir(folder_path) and folder_path != "..."
+        es_valida = bool(folder_path and os.path.isdir(folder_path))
         
         self.start_button.setEnabled(habilitar and es_valida)
         self.combo_area.setEnabled(habilitar)
@@ -269,23 +272,34 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self.headless_activo = True
         self.dark_theme_str = ""
         self.light_theme_str = ""
-        self.theme_mode = 'light' 
+        self.theme_mode = 'dark'
         
+        # Cargar temas con manejo robusto
         try:
-            dark_theme_path = resource_path("InterfazUsuario/dark_theme.qss")
-            with open(dark_theme_path, "r") as f: self.dark_theme_str = f.read()
-            light_theme_path = resource_path("InterfazUsuario/light_theme.qss")
-            with open(light_theme_path, "r") as f: self.light_theme_str = f.read()
-            self.setStyleSheet(self.light_theme_str)
-        except FileNotFoundError:
-            print("ADVERTENCIA: No se encontró tema.")
+            dark_theme_path = resource_path("InterfazUsuario/dark_modern.qss")
+            if os.path.exists(dark_theme_path):
+                with open(dark_theme_path, "r", encoding='utf-8') as f: self.dark_theme_str = f.read()
+            else:
+                print(f"ERROR: No se encontró {dark_theme_path}")
+
+            light_theme_path = resource_path("InterfazUsuario/light_modern.qss")
+            if os.path.exists(light_theme_path):
+                with open(light_theme_path, "r", encoding='utf-8') as f: self.light_theme_str = f.read()
+            else:
+                print(f"ERROR: No se encontró {light_theme_path}")
+
+            if self.dark_theme_str:
+                self.setStyleSheet(self.dark_theme_str)
+        except Exception as e:
+            print(f"ADVERTENCIA: Error cargando temas: {e}")
+            traceback.print_exc()
         
         self.hilo_activo = None
         self.worker_activo = None
         self.app_icon = None
 
         self.setWindowTitle(f"Automatizador SOAT Glosas v{APP_VERSION}")
-        self.setGeometry(100, 100, 800, 750) # Un poco más ancho para las tablas
+        self.resize(850, 780)
 
         self.ruta_icono_png = "Recursos/Icons/pingu.png"
         self.app_icon = self._cargar_icono_app(self.ruta_icono_png)
@@ -296,6 +310,8 @@ class VentanaPrincipal(QtWidgets.QWidget):
 
         # --- LAYOUT PRINCIPAL ---
         self.main_layout = QtWidgets.QVBoxLayout(self)
+        self.main_layout.setContentsMargins(20, 20, 20, 20)
+        self.main_layout.setSpacing(15)
         
         self._crear_titulo()
         self.main_layout.addLayout(self.titulo_layout)
@@ -313,7 +329,6 @@ class VentanaPrincipal(QtWidgets.QWidget):
         if self.tray_icon and QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
             self.tray_icon.show()
 
-    # --- MÉTODOS DELEGADOS PARA RADICACIÓN ---
     def iniciar_automatizacion_radicacion(self, area_id, aseguradora_id, folder_path):
         if self.hilo_activo and self.hilo_activo.isRunning():
             QtWidgets.QMessageBox.warning(self, "Proceso Activo", "Ya hay un proceso en curso.")
@@ -323,10 +338,10 @@ class VentanaPrincipal(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, "Entrada Inválida", "Seleccione aseguradora y carpeta válida.")
             return
 
+        print(f"DEBUG: Lanzando Worker. area={area_id}, aseg={aseguradora_id}, path={folder_path}")
         self.tab_radicacion.log_text_edit.clear()
         self.tab_radicacion.append_log(f"Preparando automatización...")
         self.tab_radicacion._actualizar_estado_botones(proceso_corriendo=True)
-        # Desactivar botones globales también
         self.headless_button.setEnabled(False)
         self.theme_button.setEnabled(False)
 
@@ -341,10 +356,11 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self.hilo_activo.finished.connect(self.hilo_activo.deleteLater)
         self.hilo_activo.finished.connect(self._limpiar_referencias_post_hilo)
         self.hilo_activo.started.connect(self.worker_activo.run_automation)
+        
+        print("DEBUG: Thread start()")
         self.hilo_activo.start()
 
     def iniciar_generacion_reporte(self, folder_path):
-        # Similar logic for report generation...
         if self.hilo_activo and self.hilo_activo.isRunning(): return
         
         ruta_json = Path(folder_path) / "resultados_automatizacion.json"
@@ -370,9 +386,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self.hilo_activo.started.connect(self.worker_activo.run_report_generation)
         self.hilo_activo.start()
 
-    # --- MÉTODOS COMPARTIDOS / HEREDADOS ---
     def _cargar_icono_app(self, ruta_relativa_icono):
-        # (Mismo código que antes)
         try:
             icon_path = resource_path(ruta_relativa_icono)
             if os.path.exists(icon_path):
@@ -381,7 +395,6 @@ class VentanaPrincipal(QtWidgets.QWidget):
         return None
 
     def _crear_icono_bandeja(self):
-        # (Mismo código simplificado)
         if not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable(): return
         self.tray_icon = QtWidgets.QSystemTrayIcon(self)
         if self.app_icon: self.tray_icon.setIcon(self.app_icon)
@@ -395,27 +408,50 @@ class VentanaPrincipal(QtWidgets.QWidget):
 
     def _crear_titulo(self):
         self.titulo_layout = QtWidgets.QHBoxLayout()
-        self.titulo_layout.setContentsMargins(10, 5, 10, 15)
+        self.titulo_layout.setContentsMargins(0, 0, 0, 10)
         
-        icon_lbl = QtWidgets.QLabel()
-        if self.app_icon: icon_lbl.setPixmap(self.app_icon.pixmap(32, 32))
+        if self.app_icon: 
+            icon_lbl = QtWidgets.QLabel()
+            icon_lbl.setPixmap(self.app_icon.pixmap(48, 48))
+            self.titulo_layout.addWidget(icon_lbl)
+            self.titulo_layout.addSpacing(15)
         
-        title_lbl = QtWidgets.QLabel(f"Automatizador SOAT v{APP_VERSION}")
-        title_lbl.setFont(QtGui.QFont("Segoe UI", 16, QtGui.QFont.Weight.Bold))
+        title_container = QtWidgets.QVBoxLayout()
+        title_lbl = QtWidgets.QLabel(f"Automatizador SOAT")
+        title_lbl.setStyleSheet("font-size: 22px; font-weight: bold; color: #0078D7;") # Azul Asotrauma
+        version_lbl = QtWidgets.QLabel(f"Versión {APP_VERSION}")
+        version_lbl.setStyleSheet("font-size: 12px; color: #888;")
+        
+        title_container.addWidget(title_lbl)
+        title_container.addWidget(version_lbl)
+        
+        self.titulo_layout.addLayout(title_container)
+        self.titulo_layout.addStretch()
         
         self.headless_button = QtWidgets.QPushButton("🙈")
-        self.headless_button.setFixedSize(32, 32)
+        self.headless_button.setToolTip("Alternar Modo Headless (Navegador Oculto)")
+        self.headless_button.setObjectName("tool_button")
+        self.headless_button.setFixedSize(40, 40)
+        self.headless_button.setCursor(QtCore.Qt.PointingHandCursor)
+        self.headless_button.setStyleSheet("""
+            QPushButton { background: transparent; border: 1px solid #444; border-radius: 6px; font-size: 18px; }
+            QPushButton:hover { background: #333; border-color: #666; }
+        """)
         self.headless_button.clicked.connect(self._toggle_headless_mode)
         
         self.theme_button = QtWidgets.QPushButton("🌙")
-        self.theme_button.setFixedSize(32, 32)
+        self.theme_button.setToolTip("Alternar Tema Claro/Oscuro")
+        self.theme_button.setObjectName("tool_button")
+        self.theme_button.setFixedSize(40, 40)
+        self.theme_button.setCursor(QtCore.Qt.PointingHandCursor)
+        self.theme_button.setStyleSheet("""
+            QPushButton { background: transparent; border: 1px solid #444; border-radius: 6px; font-size: 18px; }
+            QPushButton:hover { background: #333; border-color: #666; }
+        """)
         self.theme_button.clicked.connect(self._toggle_theme)
 
-        self.titulo_layout.addWidget(icon_lbl)
-        self.titulo_layout.addStretch()
-        self.titulo_layout.addWidget(title_lbl)
-        self.titulo_layout.addStretch()
         self.titulo_layout.addWidget(self.headless_button)
+        self.titulo_layout.addSpacing(10)
         self.titulo_layout.addWidget(self.theme_button)
 
     @QtCore.Slot()
@@ -427,25 +463,56 @@ class VentanaPrincipal(QtWidgets.QWidget):
     def _toggle_theme(self):
         if self.theme_mode == 'light':
             self.setStyleSheet(self.dark_theme_str)
-            self.theme_button.setText("☀️")
+            self.theme_button.setText("🌙")
             self.theme_mode = 'dark'
+            style = """
+                QPushButton { background: transparent; border: 1px solid #444; border-radius: 6px; font-size: 18px; color: #FFF; }
+                QPushButton:hover { background: #333; border-color: #666; }
+            """
+            self.headless_button.setStyleSheet(style)
+            self.theme_button.setStyleSheet(style)
         else:
             self.setStyleSheet(self.light_theme_str)
-            self.theme_button.setText("🌙")
+            self.theme_button.setText("☀️")
             self.theme_mode = 'light'
+            style = """
+                QPushButton { background: transparent; border: 1px solid #ccc; border-radius: 6px; font-size: 18px; color: #333; }
+                QPushButton:hover { background: #eee; border-color: #aaa; }
+            """
+            self.headless_button.setStyleSheet(style)
+            self.theme_button.setStyleSheet(style)
 
     @QtCore.Slot()
-    def _manejar_finalizacion_worker(self, *args):
-        # Lógica simplificada de finalización
+    def _manejar_finalizacion_worker(self, exitosos, fallos, omitidos, email_exitosos, email_fallos):
         self.tab_radicacion._actualizar_estado_botones(proceso_corriendo=False)
         self.headless_button.setEnabled(True)
         self.theme_button.setEnabled(True)
         
-        # Mostrar popup (reutilizar lógica existente si es necesario, aquí simplificado)
-        if len(args) >= 2:
-            QtWidgets.QMessageBox.information(self, "Proceso Finalizado", "La tarea ha terminado.")
+        if hasattr(self, 'worker_activo') and self.worker_activo:
+            exitosos_data = getattr(self.worker_activo, 'resultados_exitosos', [])
+            fallos_data = getattr(self.worker_activo, 'reporte_fallos', [])
+            omitidos_data = getattr(self.worker_activo, 'reporte_omitidos', [])
+        else:
+            exitosos_data = []
+            fallos_data = []
+            omitidos_data = []
         
-        if self.hilo_activo: self.hilo_activo.quit()
+        from InterfazUsuario.Componentes.results_dialog import ResultsDialog
+        
+        carpeta_base = self.tab_radicacion.carpeta_seleccionada if hasattr(self.tab_radicacion, 'carpeta_seleccionada') else None
+        
+        dialog = ResultsDialog(
+            exitosos=exitosos_data,
+            fallos=fallos_data,
+            omitidos=omitidos_data,
+            carpeta_base=carpeta_base,
+            parent=self
+        )
+        dialog.exec()
+        
+        if self.hilo_activo:
+            self.hilo_activo.quit()
+        self._limpiar_referencias_post_hilo()
 
     @QtCore.Slot(str)
     def _mostrar_error_critico(self, mensaje):
@@ -463,6 +530,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self.tab_radicacion._actualizar_estado_botones(proceso_corriendo=False)
         self.headless_button.setEnabled(True)
         self.theme_button.setEnabled(True)
+        print("DEBUG: Hilo limpiado.")
 
     @QtCore.Slot(QtWidgets.QSystemTrayIcon.ActivationReason)
     def _icono_bandeja_activado(self, reason):
