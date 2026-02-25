@@ -19,6 +19,7 @@ from Configuracion.constantes import (
     ASEGURADORAS_CON_EMAIL_LISTENER,
     PREVISORA_ID,
     MUNDIAL_ESCOLAR_ID,
+    GRUPO_SIS_ID,
     MUNDIAL_ESCOLAR_SEDE1_USER,
     MUNDIAL_ESCOLAR_SEDE1_PASS,
     MUNDIAL_ESCOLAR_SEDE2_USER,
@@ -34,12 +35,13 @@ class TrabajadorAutomatizacion(QtCore.QObject):
     finalizado = QtCore.Signal(int, int, int, int, int)
     error_critico = QtCore.Signal(str)
 
-    def __init__(self, area_id, aseguradora_id, carpeta_contenedora, modo_headless):
+    def __init__(self, area_id, aseguradora_id, carpeta_contenedora, modo_headless, input_glosas=None):
         super().__init__()
         self.area_id = area_id
         self.aseguradora_id = aseguradora_id
         self.carpeta_contenedora_path = Path(carpeta_contenedora).resolve()
         self.headless_mode = modo_headless
+        self.input_glosas = input_glosas
         self.email_job_queue = queue.Queue()
         self.email_final_failures = []
         self.email_thread = None
@@ -96,6 +98,10 @@ class TrabajadorAutomatizacion(QtCore.QObject):
 
         if self.aseguradora_id == MUNDIAL_ESCOLAR_ID:
             self.run_mundial_escolar_automation()
+            return
+
+        if self.aseguradora_id == GRUPO_SIS_ID:
+            self.run_grupo_sis_automation()
             return
 
         self._iniciar_email_listener_si_es_necesario()
@@ -317,3 +323,54 @@ class TrabajadorAutomatizacion(QtCore.QObject):
             )
             self.progreso_update.emit(summary_msg)
             self.finalizado.emit(exitos, fallos, omitidos, 0, 0)
+
+    def run_grupo_sis_automation(self):
+        self.progreso_update.emit("--- INICIANDO PROCESAMIENTO GRUPO SIS (EXCEL) ---")
+        start_time = time.time()
+        
+        try:
+            from Automatizaciones.glosas.grupo_sis import procesar_glosas_grupo_sis
+            
+            # Buscar o validar el archivo Excel
+            if self.carpeta_contenedora_path.is_file():
+                ruta_excel = str(self.carpeta_contenedora_path)
+            else:
+                archivos_excel = list(self.carpeta_contenedora_path.glob("*.xlsx"))
+                if not archivos_excel:
+                    raise Exception(f"No se encontró ningún archivo .xlsx en {self.carpeta_contenedora_path}")
+                ruta_excel = str(archivos_excel[0])
+            self.progreso_update.emit(f"[INFO] Usando archivo Excel: {os.path.basename(ruta_excel)}")
+            
+            # Ejecutar procesamiento
+            exitos, fallos, reporte = procesar_glosas_grupo_sis(
+                ruta_excel, 
+                self.input_glosas or "", 
+                lambda msg: self.progreso_update.emit(msg)
+            )
+            
+            # Guardar reporte de fallos si existen
+            if fallos > 0:
+                ruta_fallos = self.carpeta_contenedora_path / "reporte_FALLOS_grupo_sis.txt"
+                with open(ruta_fallos, "w", encoding="utf-8") as f:
+                    f.write(f"--- REPORTE DE ERRORES GRUPO SIS ({fallos}) ---\n\n")
+                    f.write("\n".join(reporte))
+                self.progreso_update.emit(f"[INFO] Reporte de fallos guardado en: {ruta_fallos.name}")
+
+        except Exception as e:
+            self.error_critico.emit(f"ERROR CRÍTICO EN GRUPO SIS:\n{e}\n{traceback.format_exc()}")
+            return
+        
+        finally:
+            total_time = time.time() - start_time
+            tiempo_formateado = self._formatear_tiempo(total_time)
+            
+            summary_msg = (
+                f"\n--- FIN DEL PROCESO GRUPO SIS ---\n"
+                f"Éxitos (Facturas OK): {exitos}\n"
+                f"Fallos/Inconsistencias: {fallos}\n"
+                f"Tiempo Total: {tiempo_formateado}\n"
+                f"{'='*45}"
+            )
+            self.progreso_update.emit(summary_msg)
+            self.finalizado.emit(exitos, fallos, 0, 0, 0)
+

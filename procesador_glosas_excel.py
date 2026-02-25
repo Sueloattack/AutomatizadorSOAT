@@ -25,6 +25,18 @@ def obtener_ruta_excel() -> str:
         print("Ruta no válida. Asegúrate de que el archivo existe y es un .xlsx.")
 
 
+def limpiar_texto(texto):
+    """
+    Elimina caracteres que no son válidos en XML 1.0 (causan IllegalCharacterError en openpyxl).
+    Mantiene tabulaciones, saltos de línea y retornos de carro.
+    """
+    if not isinstance(texto, str):
+        return texto
+    # Rango permitido en XML: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+    # Eliminamos caracteres de control excepto \t, \n, \r
+    return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', texto)
+
+
 def obtener_glosas_desde_input() -> list[tuple[str, str]]:
     print("\n" + "="*70)
     print("Paso 2: Pega tu lista de glosas o reconsideraciones. Formato: Factura ESTADO")
@@ -182,7 +194,7 @@ def procesar_archivo(tipo: str):
                         ws.cell(i, col_map['Valor Aceptado'], 0)
                         ws.cell(i, col_map['Valor No Aceptado'], valor_tarifa)
                     
-                    ws.cell(i, col_map['Observaciones'], motivo_api)
+                    ws.cell(i, col_map['Observaciones'], limpiar_texto(motivo_api))
                     items_encontrados_count += 1
                     total_items_actualizados += 1
 
@@ -210,7 +222,7 @@ def procesar_archivo(tipo: str):
                                 ws.cell(i, col_map['Valor Aceptado'], 0)
                                 ws.cell(i, col_map['Valor No Aceptado'], valor_api)
                             
-                            ws.cell(i, col_map['Observaciones'], motivo_api)
+                            ws.cell(i, col_map['Observaciones'], limpiar_texto(motivo_api))
                             items_encontrados_count += 1
                             total_items_actualizados += 1
                             break # Pasar al siguiente item de la API
@@ -268,7 +280,7 @@ def procesar_archivo(tipo: str):
                 ws.cell(i, col_map['Aceptado(1:Si/0:No)'], 1 if estado == 'AI' else 0)
                 # Si hay múltiples ítems, usa el primer motivo_res disponible
                 motivo = items_api[0].get('motivo_res', '') if items_api else ''
-                ws.cell(i, col_map['Observaciones'], motivo)
+                ws.cell(i, col_map['Observaciones'], limpiar_texto(motivo))
                 items_encontrados_count += 1
                 total_items_actualizados += 1
             

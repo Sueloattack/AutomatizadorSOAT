@@ -169,6 +169,13 @@ AXASOAT_SELECTOR_SERVER_ERROR_H1 = "h1:has-text('502 Bad Gateway')"
 
 
 
+# ------------------------------------------------------------------------------
+# --- GRUPO SIS ---
+# ------------------------------------------------------------------------------
+GRUPO_SIS_ID = "grupo_sis"
+GRUPO_SIS_NOMBRE = "Grupo SIS"
+
+
 # ==============================================================================
 # 3. CONFIGURACIÓN DE LÓGICA DE NEGOCIO Y CARACTERÍSTICAS
 # ==============================================================================
@@ -176,7 +183,7 @@ AXASOAT_SELECTOR_SERVER_ERROR_H1 = "h1:has-text('502 Bad Gateway')"
 # --- Configuración del Lector de Correos (Email Listener) ---
 EMAIL_IMAP_SERVER = "imap.gmail.com"
 EMAIL_USER_ADDRESS = "radicacionglosa@asotrauma.com.co"
-EMAIL_APP_PASSWORD = "yuzy hkzu rnsi vggx"  # Contraseña de aplicación
+EMAIL_APP_PASSWORD = "mlmk qmln ywim yyax"  # Contraseña de aplicación
 EMAIL_PROCESSED_FOLDER = "Procesados"
 EMAIL_SEARCH_RETRIES = 60
 EMAIL_SEARCH_DELAY_SECONDS = 15
@@ -205,6 +212,7 @@ CONFIGURACION_AREAS = {
         (MUNDIAL_NOMBRE, MUNDIAL_ID),
         (AXASOAT_NOMBRE, AXASOAT_ID),
         (MUNDIAL_ESCOLAR_NOMBRE, MUNDIAL_ESCOLAR_ID),
+        (GRUPO_SIS_NOMBRE, GRUPO_SIS_ID),
     ],
     AREA_FACTURACION_ID: [
         (PREVISORA_NOMBRE, PREVISORA_ID),

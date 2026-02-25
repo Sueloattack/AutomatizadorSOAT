@@ -9,7 +9,10 @@ try:
     from Core.trabajador_automatizacion import TrabajadorAutomatizacion
     from Core.trabajador_reporte import TrabajadorReporte
     from Core.utilidades import resource_path
-    from Configuracion.constantes import APP_VERSION, CONFIGURACION_AREAS, AREA_GLOSAS_ID, AREA_FACTURACION_ID, MUNDIAL_ESCOLAR_ID
+    from Configuracion.constantes import (
+        APP_VERSION, CONFIGURACION_AREAS, AREA_GLOSAS_ID, 
+        AREA_FACTURACION_ID, MUNDIAL_ESCOLAR_ID, GRUPO_SIS_ID
+    )
     from Automatizaciones.glosas import mundial_escolar
 except ImportError as e:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
@@ -74,6 +77,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self._crear_titulo()
         self._crear_grupo_seleccion_area()
         self._crear_grupo_seleccion_aseguradora()
+        self._crear_grupo_input_glosas()  # Nuevo área para Grupo SIS
         self._crear_grupo_seleccion_carpeta()
         self._crear_botones_accion()
         self._crear_area_log()
@@ -82,6 +86,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self.main_layout.addLayout(self.titulo_layout)
         self.main_layout.addWidget(self.grupo_seleccion_area) 
         self.main_layout.addWidget(self.grupo_seleccion_aseguradora)
+        self.main_layout.addWidget(self.grupo_input_glosas) # Añadir a layout
         self.main_layout.addWidget(self.grupo_seleccion_carpeta)
         self.main_layout.addLayout(self.layout_botones)
         self.main_layout.addWidget(self.log_label)
@@ -89,12 +94,14 @@ class VentanaPrincipal(QtWidgets.QWidget):
 
         # --- Conectar Señales de Widgets UI ---
         self.combo_area.currentIndexChanged.connect(self._actualizar_combo_aseguradoras)
+        self.combo_aseguradora.currentIndexChanged.connect(self._manejar_cambio_aseguradora)
         self.browse_button.clicked.connect(self._seleccionar_carpeta)
         self.start_button.clicked.connect(self._iniciar_automatizacion)
         self.report_button.clicked.connect(self._generar_reporte)
 
         # --- Llamada inicial para poblar las aseguradoras
         self._actualizar_combo_aseguradoras()
+        self._manejar_cambio_aseguradora() # Forzar ocultar/mostrar inicial
         # --- Estado inicial de botones ---
         self._actualizar_estado_botones(proceso_corriendo=False)
 
@@ -234,9 +241,21 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self.combo_aseguradora.setMinimumHeight(28)
         layout.addWidget(self.combo_aseguradora)
 
+    def _crear_grupo_input_glosas(self):
+        """Crea el GroupBox para pegar la lista de glosas (Solo Grupo SIS)."""
+        self.grupo_input_glosas = QtWidgets.QGroupBox("3. Pegar Lista de Glosas (Factura Estado)")
+        layout = QtWidgets.QVBoxLayout(self.grupo_input_glosas)
+        
+        self.input_glosas_text = QtWidgets.QPlainTextEdit()
+        self.input_glosas_text.setPlaceholderText("Ejemplo:\nCOEX14393 C2\nFERR2245 AI")
+        self.input_glosas_text.setMinimumHeight(100)
+        layout.addWidget(self.input_glosas_text)
+        
+        self.grupo_input_glosas.setVisible(False) # Oculto por defecto
+
     def _crear_grupo_seleccion_carpeta(self):
         """Crea el GroupBox para selección de carpeta."""
-        self.grupo_seleccion_carpeta = QtWidgets.QGroupBox("3. Seleccionar Carpeta Contenedora")
+        self.grupo_seleccion_carpeta = QtWidgets.QGroupBox("4. Seleccionar Carpeta Contenedora (Excel)")
         layout = QtWidgets.QHBoxLayout(self.grupo_seleccion_carpeta)
         self.folder_line_edit = QtWidgets.QLineEdit("...")
         self.folder_line_edit.setReadOnly(True)
@@ -284,20 +303,47 @@ class VentanaPrincipal(QtWidgets.QWidget):
             
         # Actualizar el estado de los botones por si la lista quedó vacía
         self._actualizar_estado_botones(proceso_corriendo=False)
+        self._manejar_cambio_aseguradora()
+
+    @QtCore.Slot()
+    def _manejar_cambio_aseguradora(self):
+        """Maneja cambios en la aseguradora seleccionada para mostrar/ocultar campos."""
+        aseguradora_id = self.combo_aseguradora.currentData()
+        if aseguradora_id == GRUPO_SIS_ID:
+            self.grupo_input_glosas.setVisible(True)
+            self.grupo_seleccion_carpeta.setTitle("4. Seleccionar Carpeta Contenedora (Excel)")
+        else:
+            self.grupo_input_glosas.setVisible(False)
+            self.grupo_seleccion_carpeta.setTitle("3. Seleccionar Carpeta Contenedora")
 
     @QtCore.Slot()
     def _seleccionar_carpeta(self):
-        """Abre diálogo para seleccionar carpeta y actualiza estado botones."""
-        directorio_inicial = self.folder_line_edit.text()
-        if not os.path.isdir(directorio_inicial):
-            directorio_inicial = os.path.expanduser("~")
-        folder_path = QtWidgets.QFileDialog.getExistingDirectory(
-            self, "Selecciona CARPETA CONTENEDORA", directorio_inicial
-        )
-        if folder_path:
-            self.folder_line_edit.setText(folder_path)
-            if self.hilo_activo is None or not self.hilo_activo.isRunning():
-                self._actualizar_estado_botones(proceso_corriendo=False)
+        """Abre diálogo para seleccionar carpeta o archivo según el modo."""
+        path_actual = self.folder_line_edit.text()
+        
+        # Determinar directorio inicial para el diálogo
+        if path_actual and os.path.exists(path_actual):
+            dir_inicial = os.path.dirname(path_actual) if os.path.isfile(path_actual) else path_actual
+        else:
+            dir_inicial = os.path.expanduser("~")
+            
+        aseguradora_id = self.combo_aseguradora.currentData()
+        
+        if aseguradora_id == GRUPO_SIS_ID:
+            file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+                self, "Selecciona ARCHIVO EXCEL", dir_inicial, "Archivos Excel (*.xlsx)"
+            )
+            if file_path:
+                self.folder_line_edit.setText(file_path)
+        else:
+            folder_path = QtWidgets.QFileDialog.getExistingDirectory(
+                self, "Selecciona CARPETA CONTENEDORA", dir_inicial
+            )
+            if folder_path:
+                self.folder_line_edit.setText(folder_path)
+        
+        if self.hilo_activo is None or not self.hilo_activo.isRunning():
+            self._actualizar_estado_botones(proceso_corriendo=False)
 
     @QtCore.Slot()
     def _iniciar_automatizacion(self):
@@ -317,10 +363,11 @@ class VentanaPrincipal(QtWidgets.QWidget):
             not aseguradora_id
             or not folder_path
             or folder_path == "..."
-            or not os.path.isdir(folder_path)
+            or not os.path.exists(folder_path)
+            or (aseguradora_id != GRUPO_SIS_ID and not os.path.isdir(folder_path))
         ):
             QtWidgets.QMessageBox.warning(
-                self, "Entrada Inválida", "Seleccione aseguradora y carpeta válida."
+                self, "Entrada Inválida", "Seleccione aseguradora y carpeta/archivo válida."
             )
             return
 
@@ -331,7 +378,8 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self._actualizar_estado_botones(proceso_corriendo=True)
 
         self.hilo_activo = QtCore.QThread(self)
-        self.worker_activo = TrabajadorAutomatizacion(area_id, aseguradora_id, folder_path, modo_headless)
+        input_glosas = self.input_glosas_text.toPlainText() if aseguradora_id == GRUPO_SIS_ID else None
+        self.worker_activo = TrabajadorAutomatizacion(area_id, aseguradora_id, folder_path, modo_headless, input_glosas=input_glosas)
         self.worker_activo.moveToThread(self.hilo_activo)
 
         # Conectar señales
@@ -482,15 +530,17 @@ RESUMEN DE RESULTADOS:
     def _actualizar_estado_botones(self, proceso_corriendo: bool):
         """Actualiza habilitación de controles."""
         habilitar_controles = not proceso_corriendo
-        folder_path_str = self.folder_line_edit.text()
-        es_carpeta_valida = os.path.isdir(folder_path_str) and folder_path_str != "..."
+        path_str = self.folder_line_edit.text()
+        es_path_valida = os.path.exists(path_str) and path_str != "..."
 
         # Habilitar o deshabilitar los botones de control de proceso
-        self.start_button.setEnabled(habilitar_controles and es_carpeta_valida)
+        self.start_button.setEnabled(habilitar_controles and es_path_valida)
         
         reporte_habilitado = False
-        if habilitar_controles and es_carpeta_valida:
-            ruta_json = Path(folder_path_str) / "resultados_automatizacion.json"
+        if habilitar_controles and es_path_valida:
+            # Si es carpeta, buscar el JSON. Si es archivo (Grupo SIS), buscar JSON en su carpeta.
+            dir_para_reporte = os.path.dirname(path_str) if os.path.isfile(path_str) else path_str
+            ruta_json = Path(dir_para_reporte) / "resultados_automatizacion.json"
             if ruta_json.is_file():
                 reporte_habilitado = True
         
