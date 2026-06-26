@@ -77,6 +77,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self._crear_titulo()
         self._crear_grupo_seleccion_area()
         self._crear_grupo_seleccion_aseguradora()
+        self._crear_grupo_modo_grupo_sis()  # Nuevo área de modo
         self._crear_grupo_input_glosas()  # Nuevo área para Grupo SIS
         self._crear_grupo_seleccion_carpeta()
         self._crear_botones_accion()
@@ -86,6 +87,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self.main_layout.addLayout(self.titulo_layout)
         self.main_layout.addWidget(self.grupo_seleccion_area) 
         self.main_layout.addWidget(self.grupo_seleccion_aseguradora)
+        self.main_layout.addWidget(self.grupo_modo_grupo_sis) # Nuevo área de modo
         self.main_layout.addWidget(self.grupo_input_glosas) # Añadir a layout
         self.main_layout.addWidget(self.grupo_seleccion_carpeta)
         self.main_layout.addLayout(self.layout_botones)
@@ -241,9 +243,22 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self.combo_aseguradora.setMinimumHeight(28)
         layout.addWidget(self.combo_aseguradora)
 
+    def _crear_grupo_modo_grupo_sis(self):
+        """Crea el GroupBox para elegir entre Glosas o Reconsideraciones (Solo Grupo SIS)."""
+        self.grupo_modo_grupo_sis = QtWidgets.QGroupBox("3. Seleccionar Modo de Proceso")
+        layout = QtWidgets.QVBoxLayout(self.grupo_modo_grupo_sis)
+        
+        self.combo_modo_grupo_sis = QtWidgets.QComboBox()
+        self.combo_modo_grupo_sis.addItem("Glosas", userData="glosas")
+        self.combo_modo_grupo_sis.addItem("Reconsideraciones", userData="reconsideraciones")
+        self.combo_modo_grupo_sis.setMinimumHeight(28)
+        layout.addWidget(self.combo_modo_grupo_sis)
+        
+        self.grupo_modo_grupo_sis.setVisible(False)
+
     def _crear_grupo_input_glosas(self):
         """Crea el GroupBox para pegar la lista de glosas (Solo Grupo SIS)."""
-        self.grupo_input_glosas = QtWidgets.QGroupBox("3. Pegar Lista de Glosas (Factura Estado)")
+        self.grupo_input_glosas = QtWidgets.QGroupBox("4. Pegar Lista de Glosas (Factura Estado)")
         layout = QtWidgets.QVBoxLayout(self.grupo_input_glosas)
         
         self.input_glosas_text = QtWidgets.QPlainTextEdit()
@@ -255,7 +270,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
 
     def _crear_grupo_seleccion_carpeta(self):
         """Crea el GroupBox para selección de carpeta."""
-        self.grupo_seleccion_carpeta = QtWidgets.QGroupBox("4. Seleccionar Carpeta Contenedora (Excel)")
+        self.grupo_seleccion_carpeta = QtWidgets.QGroupBox("5. Seleccionar Carpeta Contenedora (Excel)")
         layout = QtWidgets.QHBoxLayout(self.grupo_seleccion_carpeta)
         self.folder_line_edit = QtWidgets.QLineEdit("...")
         self.folder_line_edit.setReadOnly(True)
@@ -310,10 +325,14 @@ class VentanaPrincipal(QtWidgets.QWidget):
         """Maneja cambios en la aseguradora seleccionada para mostrar/ocultar campos."""
         aseguradora_id = self.combo_aseguradora.currentData()
         if aseguradora_id == GRUPO_SIS_ID:
+            self.grupo_modo_grupo_sis.setVisible(True)
             self.grupo_input_glosas.setVisible(True)
-            self.grupo_seleccion_carpeta.setTitle("4. Seleccionar Carpeta Contenedora (Excel)")
+            self.grupo_input_glosas.setTitle("4. Pegar Lista de Registros (Factura Estado)")
+            self.grupo_seleccion_carpeta.setTitle("5. Seleccionar Carpeta Contenedora (Excel)")
         else:
+            self.grupo_modo_grupo_sis.setVisible(False)
             self.grupo_input_glosas.setVisible(False)
+            self.grupo_input_glosas.setTitle("3. Pegar Lista de Glosas (Factura Estado)")
             self.grupo_seleccion_carpeta.setTitle("3. Seleccionar Carpeta Contenedora")
 
     @QtCore.Slot()
@@ -379,7 +398,13 @@ class VentanaPrincipal(QtWidgets.QWidget):
 
         self.hilo_activo = QtCore.QThread(self)
         input_glosas = self.input_glosas_text.toPlainText() if aseguradora_id == GRUPO_SIS_ID else None
-        self.worker_activo = TrabajadorAutomatizacion(area_id, aseguradora_id, folder_path, modo_headless, input_glosas=input_glosas)
+        modo_grupo_sis = self.combo_modo_grupo_sis.currentData() if aseguradora_id == GRUPO_SIS_ID else "glosas"
+        
+        self.worker_activo = TrabajadorAutomatizacion(
+            area_id, aseguradora_id, folder_path, modo_headless, 
+            input_glosas=input_glosas,
+            modo_grupo_sis=modo_grupo_sis
+        )
         self.worker_activo.moveToThread(self.hilo_activo)
 
         # Conectar señales

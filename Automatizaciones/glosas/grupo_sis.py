@@ -39,9 +39,9 @@ def consultar_items_de_glosa_api(factura: str, estado: str, progreso_callback=No
             progreso_callback(f"  - ERROR CRÍTICO durante la consulta a la API: {e}")
         return []
 
-def procesar_glosas_grupo_sis(ruta_excel: str, lista_glosas_texto: str, progreso_callback):
+def procesar_glosas_grupo_sis(ruta_excel: str, lista_glosas_texto: str, progreso_callback, modo: str = "glosas"):
     """
-    Procesa glosas para Grupo SIS integrando la lógica de procesador_glosas_excel.py.
+    Procesa glosas o reconsideraciones para Grupo SIS integrando la lógica de procesador_glosas_excel.py.
     """
     # 1. Analizar lista de glosas desde texto
     glosas_a_procesar = []
@@ -54,12 +54,12 @@ def procesar_glosas_grupo_sis(ruta_excel: str, lista_glosas_texto: str, progreso
             progreso_callback(f"  -> Advertencia: Formato incorrecto, se omitirá: '{linea}'")
 
     if not glosas_a_procesar:
-        progreso_callback("❌ No hay glosas válidas para procesar.")
+        progreso_callback("❌ No hay registros válidos para procesar.")
         return 0, 0, []
 
     # 2. Cargar Excel
     try:
-        progreso_callback(f"\n🔄 Abriendo archivo: {ruta_excel}...")
+        progreso_callback(f"\n🔄 Abriendo archivo: {ruta_excel} (Modo: {modo.upper()})...")
         wb = load_workbook(ruta_excel)
         ws = wb.active
         progreso_callback("Lectura exitosa.")
@@ -67,15 +67,23 @@ def procesar_glosas_grupo_sis(ruta_excel: str, lista_glosas_texto: str, progreso
         progreso_callback(f"❌ ERROR FATAL al abrir el Excel: {e}")
         return 0, 0, []
 
-    # 3. Mapeo de columnas
-    col_map = {
-        "Factura": None,
-        "Valor Glosa Tarifa": None,
-        "Valor Aceptado": None,
-        "Valor No Aceptado": None,
-        "Observaciones": None,
-        "Glosa Factura": None
-    }
+    # 3. Mapeo de columnas según modo
+    if modo == "glosas":
+        col_map = {
+            "Factura": None,
+            "Valor Glosa Tarifa": None,
+            "Valor Aceptado": None,
+            "Valor No Aceptado": None,
+            "Observaciones": None,
+            "Glosa Factura": None
+        }
+    else:  # reconsideraciones
+        col_map = {
+            "Factura": None,
+            "Valor Objetado": None,
+            "Aceptado(1:Si/0:No)": None,
+            "Observaciones": None
+        }
 
     encabezados = {str(celda.value).strip(): celda.column for celda in ws[1] if celda.value}
     for k in col_map.keys():
@@ -83,7 +91,7 @@ def procesar_glosas_grupo_sis(ruta_excel: str, lista_glosas_texto: str, progreso
 
     missing_cols = [k for k, v in col_map.items() if v is None]
     if missing_cols:
-        progreso_callback(f"❌ ERROR: Faltan columnas en el Excel: {missing_cols}")
+        progreso_callback(f"❌ ERROR: Faltan columnas en el Excel para modo {modo}: {missing_cols}")
         return 0, 0, []
 
     exitos = 0
@@ -116,57 +124,74 @@ def procesar_glosas_grupo_sis(ruta_excel: str, lista_glosas_texto: str, progreso
             reporte_final.append(f"{factura} (No en Excel)")
             continue
 
-        # Aplicar lógica de glosas
-        total_api = sum(int(float(item.get('vr_glosa', 0))) for item in items_api)
-        total_excel_rows = sum(int(ws.cell(i, col_map['Valor Glosa Tarifa']).value or 0) for i in filas_factura)
-        
-        # Estrategia 1: Suma
-        if total_excel_rows > 0 and abs(total_api - total_excel_rows) < 5:
-            progreso_callback(f"  -> Coincidencia por Suma ({total_api}). Aplicando a todas las filas.")
-            motivo_api = items_api[0].get('motivo_res', '')
-            for i in filas_factura:
-                v_tarifa = int(ws.cell(i, col_map['Valor Glosa Tarifa']).value or 0)
-                if estado == 'AI':
-                    ws.cell(i, col_map['Valor Aceptado'], v_tarifa)
-                    ws.cell(i, col_map['Valor No Aceptado'], 0)
-                else:
-                    ws.cell(i, col_map['Valor Aceptado'], 0)
-                    ws.cell(i, col_map['Valor No Aceptado'], v_tarifa)
-                ws.cell(i, col_map['Observaciones'], limpiar_texto(motivo_api))
-                total_filas_actualizadas += 1
-        else:
-            # Estrategia 2: Item a Item
-            progreso_callback(f"  -> Suma no coincide. Usando coincidencia exacta por ítem.")
-            for item in items_api:
-                v_api = int(float(item.get('vr_glosa', 0)))
-                motivo_api = item.get('motivo_res', '')
+        # ==============================================================
+        # LÓGICA MODO GLOSAS
+        # ==============================================================
+        if modo == "glosas":
+            total_api = sum(int(float(item.get('vr_glosa', 0))) for item in items_api)
+            total_excel_rows = sum(int(ws.cell(i, col_map['Valor Glosa Tarifa']).value or 0) for i in filas_factura)
+            
+            # Estrategia 1: Suma
+            if total_excel_rows > 0 and abs(total_api - total_excel_rows) < 5:
+                progreso_callback(f"  -> Coincidencia por Suma ({total_api}). Aplicando a todas las filas.")
+                motivo_api = items_api[0].get('motivo_res', '')
                 for i in filas_factura:
-                    v_excel = int(ws.cell(i, col_map['Valor Glosa Tarifa']).value or 0)
-                    if v_excel == v_api and not ws.cell(i, col_map['Valor Aceptado']).value and not ws.cell(i, col_map['Valor No Aceptado']).value:
-                        if estado == 'AI':
-                            ws.cell(i, col_map['Valor Aceptado'], v_api)
-                            ws.cell(i, col_map['Valor No Aceptado'], 0)
-                        else:
-                            ws.cell(i, col_map['Valor Aceptado'], 0)
-                            ws.cell(i, col_map['Valor No Aceptado'], v_api)
-                        ws.cell(i, col_map['Observaciones'], limpiar_texto(motivo_api))
-                        total_filas_actualizadas += 1
-                        break
+                    v_tarifa = int(ws.cell(i, col_map['Valor Glosa Tarifa']).value or 0)
+                    if estado == 'AI':
+                        ws.cell(i, col_map['Valor Aceptado'], v_tarifa)
+                        ws.cell(i, col_map['Valor No Aceptado'], 0)
+                    else:
+                        ws.cell(i, col_map['Valor Aceptado'], 0)
+                        ws.cell(i, col_map['Valor No Aceptado'], v_tarifa)
+                    ws.cell(i, col_map['Observaciones'], limpiar_texto(motivo_api))
+                    total_filas_actualizadas += 1
+            else:
+                # Estrategia 2: Item a Item
+                progreso_callback(f"  -> Suma no coincide. Usando coincidencia exacta por ítem.")
+                for item in items_api:
+                    v_api = int(float(item.get('vr_glosa', 0)))
+                    motivo_api = item.get('motivo_res', '')
+                    for i in filas_factura:
+                        v_excel = int(ws.cell(i, col_map['Valor Glosa Tarifa']).value or 0)
+                        if v_excel == v_api and not ws.cell(i, col_map['Valor Aceptado']).value and not ws.cell(i, col_map['Valor No Aceptado']).value:
+                            if estado == 'AI':
+                                ws.cell(i, col_map['Valor Aceptado'], v_api)
+                                ws.cell(i, col_map['Valor No Aceptado'], 0)
+                            else:
+                                ws.cell(i, col_map['Valor Aceptado'], 0)
+                                ws.cell(i, col_map['Valor No Aceptado'], v_api)
+                            ws.cell(i, col_map['Observaciones'], limpiar_texto(motivo_api))
+                            total_filas_actualizadas += 1
+                            break
 
-        # Validación Final de la Factura
-        suma_aceptado = sum(int(ws.cell(i, col_map['Valor Aceptado']).value or 0) for i in filas_factura)
-        suma_no_aceptado = sum(int(ws.cell(i, col_map['Valor No Aceptado']).value or 0) for i in filas_factura)
-        total_calc = suma_aceptado + suma_no_aceptado
-        val_gf = ws.cell(filas_factura[0], col_map['Glosa Factura']).value
-        val_gf_num = int(val_gf) if val_gf is not None else 0
+            # Validación Final de la Factura (Modo Glosas)
+            suma_aceptado = sum(int(ws.cell(i, col_map['Valor Aceptado']).value or 0) for i in filas_factura)
+            suma_no_aceptado = sum(int(ws.cell(i, col_map['Valor No Aceptado']).value or 0) for i in filas_factura)
+            total_calc = suma_aceptado + suma_no_aceptado
+            val_gf = ws.cell(filas_factura[0], col_map['Glosa Factura']).value
+            val_gf_num = int(val_gf) if val_gf is not None else 0
 
-        if total_calc == val_gf_num and all(int(ws.cell(i, col_map['Valor Glosa Tarifa']).value or 0) == (int(ws.cell(i, col_map['Valor Aceptado']).value or 0) + int(ws.cell(i, col_map['Valor No Aceptado']).value or 0)) for i in filas_factura):
-            exitos += 1
-            reporte_final.append(f"{factura} (OK)")
+            if total_calc == val_gf_num and all(int(ws.cell(i, col_map['Valor Glosa Tarifa']).value or 0) == (int(ws.cell(i, col_map['Valor Aceptado']).value or 0) + int(ws.cell(i, col_map['Valor No Aceptado']).value or 0)) for i in filas_factura):
+                exitos += 1
+                reporte_final.append(f"{factura} (OK)")
+            else:
+                fallos += 1
+                reporte_final.append(f"{factura} (Inconsistente)")
+                progreso_callback(f"  ❌ Error de validación en {factura}")
+
+        # ==============================================================
+        # LÓGICA MODO RECONSIDERACIONES
+        # ==============================================================
         else:
-            fallos += 1
-            reporte_final.append(f"{factura} (Inconsistente)")
-            progreso_callback(f"  ❌ Error de validación en {factura}")
+            for i in filas_factura:
+                ws.cell(i, col_map['Aceptado(1:Si/0:No)'], 1 if estado == 'AI' else 0)
+                # Si hay múltiples ítems, usa el motivo del primero
+                motivo = items_api[0].get('motivo_res', '') if items_api else ''
+                ws.cell(i, col_map['Observaciones'], limpiar_texto(motivo))
+                total_filas_actualizadas += 1
+            
+            exitos += 1
+            reporte_final.append(f"{factura} (Recons Aplicada)")
 
     # Guardar
     try:

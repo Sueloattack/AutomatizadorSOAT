@@ -176,6 +176,14 @@ GRUPO_SIS_ID = "grupo_sis"
 GRUPO_SIS_NOMBRE = "Grupo SIS"
 
 
+# ------------------------------------------------------------------------------
+# --- SURA ARL ---
+# ------------------------------------------------------------------------------
+SURA_ARL_ID = "sura_arl"
+SURA_ARL_NOMBRE = "SURA ARL"
+SURA_ARL_LOGIN_URL = "https://login.sura.com/sso/servicelogin.aspx?continueTo=https%3A%2F%2Fwww.arlsura.com%2Fcomponent%2Farl_login&service=arpsura"
+
+
 # ==============================================================================
 # 3. CONFIGURACIÓN DE LÓGICA DE NEGOCIO Y CARACTERÍSTICAS
 # ==============================================================================
@@ -213,6 +221,7 @@ CONFIGURACION_AREAS = {
         (AXASOAT_NOMBRE, AXASOAT_ID),
         (MUNDIAL_ESCOLAR_NOMBRE, MUNDIAL_ESCOLAR_ID),
         (GRUPO_SIS_NOMBRE, GRUPO_SIS_ID),
+        (SURA_ARL_NOMBRE, SURA_ARL_ID),
     ],
     AREA_FACTURACION_ID: [
         (PREVISORA_NOMBRE, PREVISORA_ID),

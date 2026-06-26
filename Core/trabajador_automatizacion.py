@@ -35,13 +35,14 @@ class TrabajadorAutomatizacion(QtCore.QObject):
     finalizado = QtCore.Signal(int, int, int, int, int)
     error_critico = QtCore.Signal(str)
 
-    def __init__(self, area_id, aseguradora_id, carpeta_contenedora, modo_headless, input_glosas=None):
+    def __init__(self, area_id, aseguradora_id, carpeta_contenedora, modo_headless, input_glosas=None, modo_grupo_sis="glosas"):
         super().__init__()
         self.area_id = area_id
         self.aseguradora_id = aseguradora_id
         self.carpeta_contenedora_path = Path(carpeta_contenedora).resolve()
         self.headless_mode = modo_headless
         self.input_glosas = input_glosas
+        self.modo_grupo_sis = modo_grupo_sis
         self.email_job_queue = queue.Queue()
         self.email_final_failures = []
         self.email_thread = None
@@ -345,7 +346,8 @@ class TrabajadorAutomatizacion(QtCore.QObject):
             exitos, fallos, reporte = procesar_glosas_grupo_sis(
                 ruta_excel, 
                 self.input_glosas or "", 
-                lambda msg: self.progreso_update.emit(msg)
+                lambda msg: self.progreso_update.emit(msg),
+                modo=self.modo_grupo_sis
             )
             
             # Guardar reporte de fallos si existen
