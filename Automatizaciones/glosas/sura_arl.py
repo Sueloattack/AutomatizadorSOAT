@@ -151,6 +151,61 @@ def navegar_a_inicio(page: Page) -> tuple[bool, str]:
         traceback.print_exc()
         return False, "\n".join(logs)
 
+def limpiar_archivo_malicioso(file_path: Path, logs: list) -> bool:
+    """Detecta y limpia posibles scripts maliciosos en PDFs reemplazando bytes."""
+    try:
+        content = file_path.read_bytes()
+        patterns = [
+            (b'/JavaScript', re.IGNORECASE),
+            (b'/OpenAction', re.IGNORECASE),
+            (b'/JS', re.IGNORECASE),
+            (b'<script>', re.IGNORECASE),
+            (b'eval\\(', re.IGNORECASE),
+            (b'app\\.alert\\(', re.IGNORECASE)
+        ]
+        
+        has_malicious = False
+        for pattern, flags in patterns:
+            if re.search(pattern, content, flags):
+                has_malicious = True
+                break
+                
+        if not has_malicious:
+            return False
+            
+        logs.append(f"  - Detectados posibles scripts maliciosos en {file_path.name}. Creando respaldo y limpiando...")
+        
+        # 1. Crear respaldo del original
+        respaldo_path = file_path.with_name(f"{file_path.stem}_ORIGINAL{file_path.suffix}")
+        if not respaldo_path.exists():
+            file_path.rename(respaldo_path)
+            content = respaldo_path.read_bytes()
+        else:
+            content = respaldo_path.read_bytes()
+            
+        # 2. Reemplazo de bytes (misma longitud)
+        def repl_js(m): return b"/J_"
+        def repl_javascript(m): return b"/JavaScrip_"
+        def repl_openaction(m): return b"/OpenActio_"
+        def repl_script(m): return b"<scri_pt>"
+        def repl_eval(m): return b"eva_("
+        def repl_alert(m): return b"app.aler_("
+
+        content = re.sub(b'/JS\\b', repl_js, content, flags=re.IGNORECASE)
+        content = re.sub(b'/JavaScript\\b', repl_javascript, content, flags=re.IGNORECASE)
+        content = re.sub(b'/OpenAction\\b', repl_openaction, content, flags=re.IGNORECASE)
+        content = re.sub(b'<script>', repl_script, content, flags=re.IGNORECASE)
+        content = re.sub(b'eval\\(', repl_eval, content, flags=re.IGNORECASE)
+        content = re.sub(b'app\\.alert\\(', repl_alert, content, flags=re.IGNORECASE)
+        
+        # 3. Guardar el archivo limpio en la ruta original
+        file_path.write_bytes(content)
+        logs.append(f"  - Archivo limpio guardado como {file_path.name}.")
+        return True
+    except Exception as e:
+        logs.append(f"  - ERROR limpiando archivo {file_path.name}: {e}")
+        return False
+
 def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context: str = 'default') -> tuple[str, str, str, str]:
     """Procesa una factura/carpeta en el radicador de SURA ARL."""
     logs = [f"--- Iniciando Playwright/SURA ARL para: '{folder_name}' ---"]
@@ -162,6 +217,11 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
         msg = "OMITIENDO: Carpeta excluida por nombre o ya radicada (RAD.pdf existe)."
         logs.append(msg)
         return ESTADO_OMITIDO_RADICADO, "", codigo_factura, "\n".join(logs)
+
+    # Limpiar posibles scripts maliciosos en PDFs antes de procesar
+    for f in subfolder_path.iterdir():
+        if f.is_file() and f.suffix.upper() == ".PDF" and f.name.upper() != "RAD.PDF" and not f.name.upper().endswith("_ORIGINAL.PDF"):
+            limpiar_archivo_malicioso(f, logs)
 
     # Obtener la página del radicador que guardamos en navegar_a_inicio
     sura_page = getattr(page, 'sura_page', page)
@@ -254,6 +314,15 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
                     comp.dropped = function(ngxFiles) {{
                         console.log("Interceptado dropped files:", ngxFiles);
                         const cdFactura = this.elementoFactura.cdFactura;
+                        
+                        // Filtrar los archivos de respaldo (_ORIGINAL) para que no se suban ni validen
+                        if (ngxFiles) {{
+                            ngxFiles = ngxFiles.filter(f => {{
+                                const name = f.fileEntry ? f.fileEntry.name.toUpperCase() : '';
+                                return !name.endsWith('_ORIGINAL.PDF');
+                            }});
+                        }}
+
                         if (ngxFiles && ngxFiles.length > 0) {{
                             ngxFiles.forEach(fileEntry => {{
                                 const fileName = fileEntry.fileEntry ? fileEntry.fileEntry.name : 'file.pdf';
