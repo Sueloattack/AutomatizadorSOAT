@@ -181,7 +181,7 @@ def limpiar_archivo_malicioso(file_path: Path, logs: list) -> bool:
             file_path.rename(respaldo_path)
             content = respaldo_path.read_bytes()
         else:
-            content = respaldo_path.read_bytes()
+            content = file_path.read_bytes()
             
         # 2. Reemplazo de bytes (misma longitud)
         def repl_js(m): return b"/J_"
@@ -191,9 +191,9 @@ def limpiar_archivo_malicioso(file_path: Path, logs: list) -> bool:
         def repl_eval(m): return b"eva_("
         def repl_alert(m): return b"app.aler_("
 
-        content = re.sub(b'/JS\\b', repl_js, content, flags=re.IGNORECASE)
-        content = re.sub(b'/JavaScript\\b', repl_javascript, content, flags=re.IGNORECASE)
-        content = re.sub(b'/OpenAction\\b', repl_openaction, content, flags=re.IGNORECASE)
+        content = re.sub(b'/JS', repl_js, content, flags=re.IGNORECASE)
+        content = re.sub(b'/JavaScript', repl_javascript, content, flags=re.IGNORECASE)
+        content = re.sub(b'/OpenAction', repl_openaction, content, flags=re.IGNORECASE)
         content = re.sub(b'<script>', repl_script, content, flags=re.IGNORECASE)
         content = re.sub(b'eval\\(', repl_eval, content, flags=re.IGNORECASE)
         content = re.sub(b'app\\.alert\\(', repl_alert, content, flags=re.IGNORECASE)
@@ -204,6 +204,40 @@ def limpiar_archivo_malicioso(file_path: Path, logs: list) -> bool:
         return True
     except Exception as e:
         logs.append(f"  - ERROR limpiando archivo {file_path.name}: {e}")
+        return False
+
+def comprimir_pdf(file_path: Path, logs: list) -> bool:
+    """Comprime archivos PDF de más de 20MB para que queden por debajo del límite del portal."""
+    try:
+        import fitz
+        original_size = file_path.stat().st_size
+        limit = 20 * 1024 * 1024  # 20 MB
+        if original_size <= limit:
+            return False
+            
+        logs.append(f"  - El archivo {file_path.name} supera los 20MB ({original_size / 1024 / 1024:.2f} MB). Comprimiendo...")
+        
+        # 1. Crear respaldo del original si no existe
+        respaldo_path = file_path.with_name(f"{file_path.stem}_ORIGINAL{file_path.suffix}")
+        if not respaldo_path.exists():
+            file_path.rename(respaldo_path)
+            
+        src_path = respaldo_path
+            
+        # 2. Comprimir con PyMuPDF (deflate=True, garbage=4, clean=True)
+        doc = fitz.open(src_path)
+        doc.save(file_path, garbage=4, deflate=True, clean=True)
+        doc.close()
+        
+        new_size = file_path.stat().st_size
+        logs.append(f"  - Archivo comprimido guardado. Nuevo tamaño: {new_size / 1024 / 1024:.2f} MB (Reducción: {(1 - new_size/original_size)*100:.1f}%)")
+        
+        if new_size > limit:
+            logs.append(f"  - ADVERTENCIA: Aún después de comprimir, el archivo supera los 20MB ({new_size / 1024 / 1024:.2f} MB).")
+            
+        return True
+    except Exception as e:
+        logs.append(f"  - ERROR comprimiendo archivo {file_path.name}: {e}")
         return False
 
 def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context: str = 'default') -> tuple[str, str, str, str]:
@@ -218,9 +252,10 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
         logs.append(msg)
         return ESTADO_OMITIDO_RADICADO, "", codigo_factura, "\n".join(logs)
 
-    # Limpiar posibles scripts maliciosos en PDFs antes de procesar
+    # Limpiar y comprimir PDFs antes de procesar
     for f in subfolder_path.iterdir():
         if f.is_file() and f.suffix.upper() == ".PDF" and f.name.upper() != "RAD.PDF" and not f.name.upper().endswith("_ORIGINAL.PDF"):
+            comprimir_pdf(f, logs)
             limpiar_archivo_malicioso(f, logs)
 
     # Obtener la página del radicador que guardamos en navegar_a_inicio
@@ -344,7 +379,7 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
 
         # Esperar a ver si aparece un SweetAlert de error o si el botón Siguiente está disponible
         try:
-            sura_page.wait_for_selector("div.swal2-icon-error, button.btn-outline-dark:has-text('Siguiente')", timeout=15000)
+            sura_page.wait_for_selector("div.swal2-icon-error, button.btn-outline-dark:has-text('Siguiente')", timeout=60000)
             
             error_modal = sura_page.locator("div.swal2-icon-error")
             if error_modal.is_visible():
@@ -370,6 +405,11 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
             time.sleep(1.5)
         except PlaywrightTimeoutError:
             logs.append("  -> ERROR: Tiempo de espera agotado esperando a 'Siguiente' o error de SweetAlert.")
+            try:
+                sura_page.screenshot(path="C:/Users/GLOSAS/.gemini/antigravity-ide/brain/db1e50eb-d9c0-4444-8e27-212acea691ea/scratch/modal_error_screenshot.png")
+                logs.append("  - Captura del modal de error guardada para diagnóstico.")
+            except Exception as e_snap:
+                logs.append(f"  - No se pudo capturar diagnóstico del modal: {e_snap}")
             return ESTADO_FALLO, "Timeout Carga Soportes", codigo_factura, "\n".join(logs)
 
         # Hacer clic en "Confirmar" en el modal
@@ -434,3 +474,16 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
             logs.append(f"  - No se pudo capturar diagnóstico: {e_snap}")
         traceback.print_exc()
         return ESTADO_FALLO, "", codigo_factura, "\n".join(logs)
+    finally:
+        try:
+            cerrar_btn = sura_page.locator("button:has-text('Cerrar')")
+            if cerrar_btn.is_visible():
+                logs.append("  - Cerrando modal de carga remanente...")
+                cerrar_btn.click(timeout=5000)
+                time.sleep(1)
+        except Exception:
+            try:
+                sura_page.keyboard.press("Escape")
+                time.sleep(1)
+            except Exception:
+                pass
