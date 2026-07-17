@@ -48,8 +48,8 @@ def encontrar_y_validar_pdfs(
 
     # Patrones de búsqueda para ambos archivos
     respuesta_glosa_pattern = re.compile(r"^(FECR|COEX|FERD|FERR|FCR)(\d+)\.pdf$", re.IGNORECASE)
-    nombre_escapado = re.escape(nombre_aseguradora_en_pdf)
-    carta_glosa_pattern = re.compile(rf".*?([A-Z]+)[_-](\d+)[_-]{nombre_escapado}.*?\.pdf$", re.IGNORECASE)
+    nombre_escapado = re.escape(nombre_aseguradora_en_pdf.rstrip('.'))
+    carta_glosa_pattern = re.compile(rf".*?([A-Z]+)[_-](\d+)[_-]{nombre_escapado}\.?.*?\.pdf$", re.IGNORECASE)
 
     respuesta_glosa_info = None
     carta_glosa_info = None

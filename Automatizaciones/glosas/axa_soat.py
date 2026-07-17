@@ -210,7 +210,7 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, cont
         logs.append(rename_log)
 
         # 3. Interacción Web
-        form_ok, form_log = llenar_formulario(page, codigo_factura)
+        form_ok, form_log = llenar_formulario(page, codigo_factura, context=context)
         logs.append(form_log)
         if not form_ok:
             return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)

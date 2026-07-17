@@ -565,7 +565,7 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
                 time.sleep(1)
                 
                 # Guardar captura de pantalla del error para diagnóstico
-                error_screenshot_path = Path("C:/Users/GLOSAS/.gemini/antigravity-ide/brain/db1e50eb-d9c0-4444-8e27-212acea691ea/temp_error_screenshot.png")
+                error_screenshot_path = subfolder_path / "temp_error_screenshot.png"
                 sura_page.screenshot(path=str(error_screenshot_path))
                 logs.append(f"  - Captura de diagnóstico guardada: {error_screenshot_path.name}")
                 
@@ -574,8 +574,9 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
         except PlaywrightTimeoutError:
             logs.append("  -> ERROR: Tiempo de espera agotado esperando a 'Siguiente' o error de SweetAlert.")
             try:
-                sura_page.screenshot(path="C:/Users/GLOSAS/.gemini/antigravity-ide/brain/db1e50eb-d9c0-4444-8e27-212acea691ea/scratch/modal_error_screenshot.png")
-                logs.append("  - Captura del modal de error guardada para diagnóstico.")
+                error_screenshot_path = subfolder_path / "modal_error_screenshot.png"
+                sura_page.screenshot(path=str(error_screenshot_path))
+                logs.append(f"  - Captura del modal de error guardada para diagnóstico: {error_screenshot_path.name}")
             except Exception as e_snap:
                 logs.append(f"  - No se pudo capturar diagnóstico del modal: {e_snap}")
             return ESTADO_FALLO, "Timeout Carga Soportes", codigo_factura, "\n".join(logs)
@@ -658,21 +659,103 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
             if invalid_files_indicator.is_visible():
                 logs.append("  -> ERROR: Quedan archivos inválidos en la lista y no se puede continuar.")
                 # Guardar captura
-                error_screenshot_path = Path("C:/Users/GLOSAS/.gemini/antigravity-ide/brain/db1e50eb-d9c0-4444-8e27-212acea691ea/temp_error_screenshot.png")
+                error_screenshot_path = subfolder_path / "temp_error_screenshot.png"
                 sura_page.screenshot(path=str(error_screenshot_path))
                 return ESTADO_FALLO, "Archivos invalidos en lista", codigo_factura, "\n".join(logs)
+
+        # --- ESPERAR CARGA COMPLETA DE ARCHIVOS (PROGRESS BARS) ---
+        logs.append("  - Esperando que los archivos terminen de cargarse en el portal...")
+        t_inicio_carga = time.time()
+        timeout_carga = 180  # 3 minutos máximo para subir todos los archivos
+        carga_completa = False
+        
+        while time.time() - t_inicio_carga < timeout_carga:
+            estado = sura_page.evaluate(r"""() => {
+                const getBars = () => {
+                    let list = Array.from(document.querySelectorAll('ngb-modal-window .progress-bar, ngb-modal-window [role="progressbar"], ngb-modal-window ngb-progressbar .progress-bar'));
+                    if (list.length === 0) {
+                        list = Array.from(document.querySelectorAll('ngb-modal-window *')).filter(el => {
+                            const width = el.style.width || '';
+                            if (!width.endsWith('%')) return false;
+                            const className = (el.className || '').toString().toLowerCase();
+                            const parentClassName = el.parentElement ? (el.parentElement.className || '').toString().toLowerCase() : '';
+                            return className.includes('progress') || 
+                                   className.includes('bar') || 
+                                   parentClassName.includes('progress') || 
+                                   parentClassName.includes('bar') ||
+                                   className.includes('upload') ||
+                                   parentClassName.includes('upload');
+                        });
+                    }
+                    return list;
+                };
+                
+                const bars = getBars();
+                if (bars.length === 0) {
+                    return { count: 0, finished: 0, pending: 0 };
+                }
+                
+                let finished = 0;
+                let pending = 0;
+                
+                bars.forEach(bar => {
+                    const widthStr = bar.style.width || '';
+                    const widthMatch = widthStr.match(/(\d+(?:\.\d+)?)\s*%/);
+                    const ariaNow = parseFloat(bar.getAttribute('aria-valuenow') || '-1');
+                    const ariaMax = parseFloat(bar.getAttribute('aria-valuemax') || '100');
+                    
+                    let isFinished = false;
+                    if (widthMatch) {
+                        const val = parseFloat(widthMatch[1]);
+                        if (val >= 99.9) {
+                            isFinished = true;
+                        }
+                    } else if (ariaNow >= 0 && ariaNow === ariaMax) {
+                        isFinished = true;
+                    }
+                    
+                    if (isFinished) {
+                        finished++;
+                    } else {
+                        pending++;
+                    }
+                });
+                
+                return { count: bars.length, finished, pending };
+            }""")
+            
+            count = estado['count']
+            finished = estado['finished']
+            pending = estado['pending']
+            
+            if count > 0:
+                logs.append(f"    - Estado de subida: {finished}/{count} archivos listos (pendientes: {pending}).")
+                if pending == 0:
+                    logs.append("    - Todos los archivos se han cargado exitosamente.")
+                    carga_completa = True
+                    break
+            else:
+                if time.time() - t_inicio_carga > 8:
+                    logs.append("    - No se detectaron barras de progreso activas. Continuando...")
+                    carga_completa = True
+                    break
+            
+            time.sleep(2)
+            
+        if not carga_completa:
+            logs.append("  -> ADVERTENCIA: Se alcanzó el tiempo límite de espera para la subida de archivos. Se intentará continuar.")
 
         # Hacer clic en "Siguiente" en el modal
         sura_page.locator("button.btn-outline-dark:has-text('Siguiente')").click()
         time.sleep(1.5)
-
+ 
         # Hacer clic en "Confirmar" en el modal
         sura_page.locator("button.btn-outline-dark:has-text('Confirmar')").click()
         logs.append("  - Confirmación de subida enviada.")
-
+ 
         # Esperar alerta de éxito
         alerta_exito = sura_page.locator(".swal2-html-container:has-text('Se han cargado los archivos')")
-        alerta_exito.wait_for(state="visible", timeout=20000)
+        alerta_exito.wait_for(state="visible", timeout=40000)
         
         # Clic en "OK" del SweetAlert
         sura_page.locator("button.swal2-confirm:has-text('OK')").click()
