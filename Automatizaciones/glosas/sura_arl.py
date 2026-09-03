@@ -16,6 +16,11 @@ try:
 except ImportError as e:
     raise ImportError(f"ERROR CRITICO: No se pudieron importar constantes: {e}")
 
+try:
+    from Core.utilidades import guardar_screenshot_de_error
+except ImportError as e:
+    raise ImportError(f"ERROR CRITICO: No se pudo importar guardar_screenshot_de_error: {e}")
+
 ESTADO_EXITO = "EXITO"
 ESTADO_FALLO = "FALLO"
 ESTADO_OMITIDO_RADICADO = "OMITIDO_RADICADO"
@@ -296,10 +301,15 @@ def limpiar_pantalla_y_modales(sura_page: Page, logs: list):
     # 1. Cerrar SweetAlerts
     try:
         confirm_btn = sura_page.locator("button.swal2-confirm")
-        while confirm_btn.is_visible():
+        for _ in range(5):
+            if not confirm_btn.is_visible():
+                break
             logs.append("    - Cerrando alerta SweetAlert...")
-            confirm_btn.first.click(timeout=3000)
-            time.sleep(1)
+            try:
+                confirm_btn.first.click(timeout=2000)
+            except Exception:
+                sura_page.evaluate("() => { const b = document.querySelector('button.swal2-confirm'); if (b) b.click(); }")
+            time.sleep(0.5)
     except Exception:
         pass
         
@@ -337,12 +347,23 @@ def limpiar_pantalla_y_modales(sura_page: Page, logs: list):
                     document.querySelectorAll('ngb-modal-window').forEach(el => el.remove());
                     document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
                     document.querySelectorAll('.swal2-container').forEach(el => el.remove());
+                    document.querySelectorAll('.overlay').forEach(el => el.remove());
                     document.body.classList.remove('modal-open');
                     document.body.classList.remove('swal2-shown');
                 }""")
                 break
     except Exception as e:
         logs.append(f"    - Excepción durante limpieza de modales: {e}")
+    finally:
+        try:
+            sura_page.evaluate("""() => {
+                document.querySelectorAll('.swal2-container').forEach(el => el.remove());
+                document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+                document.querySelectorAll('.overlay').forEach(el => el.remove());
+                document.body.classList.remove('modal-open', 'swal2-shown');
+            }""")
+        except Exception:
+            pass
 
 def esperar_overlay_oculto(sura_page: Page):
     """Espera a que el spinner/overlay de carga de la página no sea visible."""
@@ -373,6 +394,31 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
     logs = [f"--- Iniciando Playwright/SURA ARL para: '{folder_name}' ---"]
     codigo_factura = folder_name.upper()
     radicado = ""
+    archivos_que_no_pasaron = set()
+
+    def eliminar_soportes_fallidos():
+        """Elimina del disco local los soportes que no hayan pasado la validación tras intentar todo."""
+        if not archivos_que_no_pasaron:
+            return
+        logs.append("  - Eliminando del disco los soportes que no pasaron la validación tras intentar todo...")
+        for fname in list(archivos_que_no_pasaron):
+            f_path = subfolder_path / fname
+            if f_path.is_file():
+                try:
+                    f_path.unlink()
+                    logs.append(f"    - Soporte descartado eliminado: {fname}")
+                except Exception as e_del:
+                    logs.append(f"    - ADVERTENCIA: No se pudo eliminar soporte {fname}: {e_del}")
+            # También eliminar respaldo _ORIGINAL si existe
+            stem = Path(fname).stem
+            suffix = Path(fname).suffix
+            respaldo = subfolder_path / f"{stem}_ORIGINAL{suffix}"
+            if respaldo.is_file():
+                try:
+                    respaldo.unlink()
+                    logs.append(f"    - Respaldo _ORIGINAL eliminado: {respaldo.name}")
+                except Exception:
+                    pass
     
     # 1. Verificaciones previas de nombre y RAD.pdf
     if any(p in folder_name.upper() for p in PALABRAS_EXCLUSION_CARPETAS) or (subfolder_path / "RAD.pdf").is_file():
@@ -380,8 +426,41 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
         logs.append(msg)
         return ESTADO_OMITIDO_RADICADO, "", codigo_factura, "\n".join(logs)
 
+    # 2. Limpieza recursiva de archivos no permitidos y capturas de error en la subcarpeta
+    for f in list(subfolder_path.rglob('*')):
+        if not f.is_file():
+            continue
+        fname_upper = f.name.upper()
+        # Eliminar archivos JSON que no pueden ser subidos a SURA ARL
+        if f.suffix.lower() == ".json":
+            logs.append(f"  - Eliminando archivo JSON no permitido en SURA ARL: {f.name}")
+            try:
+                f.unlink()
+            except Exception as e_del:
+                logs.append(f"    - ADVERTENCIA: No se pudo eliminar {f.name}: {e_del}")
+        # Eliminar capturas de pantalla de errores previas o archivos temporales
+        elif f.suffix.lower() in [".png", ".jpg", ".jpeg"] and (
+            "SCREENSHOT" in fname_upper or
+            "ERROR" in fname_upper or
+            fname_upper.startswith("TEMP_") or
+            fname_upper.startswith("MODAL_")
+        ):
+            logs.append(f"  - Eliminando captura de pantalla previa: {f.name}")
+            try:
+                f.unlink()
+            except Exception as e_del:
+                logs.append(f"    - ADVERTENCIA: No se pudo eliminar captura previa {f.name}: {e_del}")
+
+    # Eliminar subdirectorios vacíos (como los que solo contenían JSON)
+    for d in sorted(list(subfolder_path.rglob('*')), key=lambda p: len(p.parts), reverse=True):
+        if d.is_dir() and not any(d.iterdir()):
+            try:
+                d.rmdir()
+            except Exception:
+                pass
+
     # Limpiar y comprimir PDFs antes de procesar
-    for f in subfolder_path.iterdir():
+    for f in list(subfolder_path.rglob('*')):
         if f.is_file() and f.suffix.upper() == ".PDF" and f.name.upper() != "RAD.PDF" and not f.name.upper().endswith("_ORIGINAL.PDF"):
             comprimir_pdf(f, logs)
             limpiar_archivo_malicioso(f, logs)
@@ -440,17 +519,22 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
             
             # Tomar captura de pantalla de los detalles
             screenshot_path = subfolder_path / "temp_detalles.png"
-            sura_page.screenshot(path=str(screenshot_path))
-            
-            # Convertir captura a PDF
-            pdf_path = subfolder_path / "RAD.pdf"
             try:
-                with Image.open(screenshot_path) as img:
-                    img.convert("RGB").save(pdf_path, "PDF")
-                logs.append(f"  - Evidencia de detalles guardada como PDF: {pdf_path.name}")
-                os.remove(screenshot_path)
-            except Exception as e_pdf:
-                logs.append(f"  - ADVERTENCIA: No se pudo guardar evidencia en PDF: {e_pdf}")
+                sura_page.screenshot(path=str(screenshot_path))
+                # Convertir captura a PDF
+                pdf_path = subfolder_path / "RAD.pdf"
+                try:
+                    with Image.open(screenshot_path) as img:
+                        img.convert("RGB").save(pdf_path, "PDF")
+                    logs.append(f"  - Evidencia de detalles guardada como PDF: {pdf_path.name}")
+                except Exception as e_pdf:
+                    logs.append(f"  - ADVERTENCIA: No se pudo guardar evidencia en PDF: {e_pdf}")
+            finally:
+                if screenshot_path.is_file():
+                    try:
+                        screenshot_path.unlink()
+                    except Exception:
+                        pass
             
             # Cerrar el modal haciendo clic en el botón "Cerrar"
             try:
@@ -508,13 +592,17 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
                                 const originalDropped = comp.dropped;
                                 comp.dropped = function(ngxFiles) {{
                                     console.log("Interceptado dropped files:", ngxFiles);
-                                    const cdFactura = this.elementoFactura.cdFactura;
+                                    const cdFactura = (this.elementoFactura && this.elementoFactura.cdFactura) ? this.elementoFactura.cdFactura : '{codigo_factura}';
                                     
-                                    // Filtrar los archivos de respaldo (_ORIGINAL) para que no se suban ni validen
+                                    // Filtrar los archivos no deseados (backups, JSON, capturas de pantalla, extensiones no permitidas)
                                     if (ngxFiles) {{
+                                        const allowedExts = ['.PDF', '.JPG', '.JPEG', '.PNG', '.TIF', '.TIFF', '.XLS', '.XLSX'];
                                         ngxFiles = ngxFiles.filter(f => {{
                                             const name = f.fileEntry ? f.fileEntry.name.toUpperCase() : '';
-                                            return !name.endsWith('_ORIGINAL.PDF');
+                                            if (name.endsWith('_ORIGINAL.PDF')) return false;
+                                            if (name.endsWith('.JSON')) return false;
+                                            if (name.includes('SCREENSHOT') || name.includes('ERROR') || name.startsWith('TEMP_') || name.startsWith('MODAL_')) return false;
+                                            return allowedExts.some(ext => name.endsWith(ext));
                                         }});
                                     }}
 
@@ -564,34 +652,33 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
                 sura_page.locator("button:has-text('Cerrar')").click()
                 time.sleep(1)
                 
-                # Guardar captura de pantalla del error para diagnóstico
-                error_screenshot_path = subfolder_path / "temp_error_screenshot.png"
-                sura_page.screenshot(path=str(error_screenshot_path))
-                logs.append(f"  - Captura de diagnóstico guardada: {error_screenshot_path.name}")
-                
+                # Guardar captura de pantalla del error en Errores/
+                log_snap = guardar_screenshot_de_error(sura_page, f"sura_arl_{codigo_factura}_error_carga_sweetalert")
+                logs.append(f"  - {log_snap}")
+                eliminar_soportes_fallidos()
                 return ESTADO_FALLO, f"Error Carga: {error_text}", codigo_factura, "\n".join(logs)
                 
         except PlaywrightTimeoutError:
             logs.append("  -> ERROR: Tiempo de espera agotado esperando a 'Siguiente' o error de SweetAlert.")
             try:
-                error_screenshot_path = subfolder_path / "modal_error_screenshot.png"
-                sura_page.screenshot(path=str(error_screenshot_path))
-                logs.append(f"  - Captura del modal de error guardada para diagnóstico: {error_screenshot_path.name}")
+                log_snap = guardar_screenshot_de_error(sura_page, f"sura_arl_{codigo_factura}_timeout_carga_modal")
+                logs.append(f"  - {log_snap}")
             except Exception as e_snap:
                 logs.append(f"  - No se pudo capturar diagnóstico del modal: {e_snap}")
+            eliminar_soportes_fallidos()
             return ESTADO_FALLO, "Timeout Carga Soportes", codigo_factura, "\n".join(logs)
 
         # --- VALIDACIÓN DE ALERTAS EN LÍNEA (Archivos Inválidos / Scripts / Tamaño) ---
-        invalid_files_indicator = sura_page.locator("text=archivos inválidos")
-        if invalid_files_indicator.is_visible():
-            logs.append("  - Detectadas alertas en línea de archivos inválidos. Intentando eliminar archivos con error...")
-            
-            # Ejecutar script JS para eliminar los archivos con errores
-            deleted_files = sura_page.evaluate("""() => {
+        logs.append("  - Verificando estado de validación de archivos en el portal...")
+        for ronda in range(5):
+            eliminados_ronda = sura_page.evaluate(r"""() => {
+                const modal = document.querySelector('ngb-modal-window');
+                if (!modal) return [];
+
                 const isReddish = (colorStr) => {
                     if (!colorStr) return false;
                     if (colorStr.includes('red') || colorStr.includes('rgb(255, 0, 0)')) return true;
-                    const match = colorStr.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+                    const match = colorStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
                     if (match) {
                         const r = parseInt(match[1], 10);
                         const g = parseInt(match[2], 10);
@@ -601,8 +688,8 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
                     return false;
                 };
 
-                const errorElements = Array.from(document.querySelectorAll('*')).filter(el => {
-                    const text = el.textContent || '';
+                const errorElements = Array.from(modal.querySelectorAll('*')).filter(el => {
+                    const text = (el.textContent || '').toLowerCase();
                     const isExactErrorText = text.includes('scripts maliciosos') || 
                                              text.includes('supera el límite') || 
                                              text.includes('archivos inválidos') || 
@@ -617,20 +704,21 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
                     return (isExactErrorText || (hasErrorText && (isErrorColor || hasErrorClass))) && el.children.length === 0;
                 });
                 
-                const deletedFiles = [];
+                const deletedInRound = [];
                 for (const errEl of errorElements) {
                     let parent = errEl.parentElement;
                     let trashBtn = null;
                     let fileName = "";
-                    for (let i = 0; i < 5; i++) {
-                        if (!parent) break;
+                    for (let i = 0; i < 6; i++) {
+                        if (!parent || parent === modal) break;
                         if (!trashBtn) {
-                            trashBtn = parent.querySelector('button .fa-trash, button.fa-trash, .fa-trash, button[title*="Eliminar"], button[title*="eliminar"], i.fa-trash');
+                            trashBtn = parent.querySelector('button, [role="button"], [class*="trash"], [class*="delete"], [class*="remove"], [class*="close"], i, svg') ||
+                                       Array.from(parent.querySelectorAll('*')).find(c => window.getComputedStyle(c).cursor === 'pointer');
                         }
                         if (!fileName) {
-                            const textNodes = Array.from(parent.querySelectorAll('*')).map(c => c.textContent.trim());
+                            const textNodes = Array.from(parent.querySelectorAll('*')).map(c => (c.textContent || '').trim());
                             for (const text of textNodes) {
-                                if (/\\.(pdf|jpg|jpeg|png|tif|tiff|xls|xlsx)$/i.test(text)) {
+                                if (/\.(pdf|jpg|jpeg|png|tif|tiff|xls|xlsx|json)$/i.test(text)) {
                                     fileName = text;
                                     break;
                                 }
@@ -639,29 +727,72 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
                         parent = parent.parentElement;
                     }
                     if (trashBtn) {
-                        ['mousedown', 'mouseup', 'click'].forEach(eventType => {
-                            const event = new MouseEvent(eventType, { bubbles: true, cancelable: true, view: window });
-                            trashBtn.dispatchEvent(event);
-                        });
-                        deletedFiles.push(fileName || "Archivo desconocido");
+                        const btnToClick = trashBtn.closest('button') || trashBtn;
+                        try {
+                            btnToClick.click();
+                            ['mousedown', 'mouseup', 'click'].forEach(eventType => {
+                                const event = new MouseEvent(eventType, { bubbles: true, cancelable: true, view: window });
+                                btnToClick.dispatchEvent(event);
+                            });
+                        } catch(e) {}
+                        deletedInRound.push(fileName || "Archivo desconocido");
                     }
                 }
-                return deletedFiles;
+                return deletedInRound;
             }""")
-            
-            if deleted_files:
-                logs.append(f"  - Archivos eliminados de la lista de subida por errores: {', '.join(deleted_files)}")
+
+            if eliminados_ronda:
+                for f_elim in eliminados_ronda:
+                    if f_elim != "Archivo desconocido":
+                        archivos_que_no_pasaron.add(f_elim)
+                logs.append(f"  - Archivos con error eliminados del modal (Ronda {ronda+1}): {', '.join(eliminados_ronda)}")
                 time.sleep(2)
             else:
-                logs.append("  - ADVERTENCIA: Se detectó el indicador de archivos inválidos pero no se pudieron eliminar de manera automática.")
-                
-            # Volver a verificar si aún quedan archivos inválidos
-            if invalid_files_indicator.is_visible():
-                logs.append("  -> ERROR: Quedan archivos inválidos en la lista y no se puede continuar.")
-                # Guardar captura
-                error_screenshot_path = subfolder_path / "temp_error_screenshot.png"
-                sura_page.screenshot(path=str(error_screenshot_path))
-                return ESTADO_FALLO, "Archivos invalidos en lista", codigo_factura, "\n".join(logs)
+                break
+
+        # Verificar si quedan archivos en la lista del modal o si todos fueron descartados
+        conteo_restante = sura_page.evaluate(r"""() => {
+            const modal = document.querySelector('ngb-modal-window');
+            if (!modal) return { totalRows: 0, hasErrors: false };
+            
+            // 1. Extraer número de 'Total archivos: X'
+            const textMatch = (modal.innerText || '').match(/Total archivos:\s*(\d+)/i);
+            let count = textMatch ? parseInt(textMatch[1], 10) : 0;
+            
+            // 2. Si no, contar elementos con nombres de archivo .pdf
+            if (count === 0) {
+                const pdfElements = Array.from(modal.querySelectorAll('*')).filter(el => {
+                    return /\.(pdf|jpg|jpeg|png|tif|tiff|xls|xlsx)$/i.test(el.textContent || '') && el.children.length === 0;
+                });
+                count = pdfElements.length;
+            }
+            
+            // 3. Si el botón Siguiente existe y está habilitado
+            const sigBtn = Array.from(modal.querySelectorAll('button')).find(b => (b.textContent || '').includes('Siguiente'));
+            const sigEnabled = sigBtn ? (!sigBtn.disabled) : false;
+            if (sigEnabled && count === 0) {
+                count = 1; // Al menos un archivo válido si Siguiente está habilitado
+            }
+
+            const errorIndicator = Array.from(modal.querySelectorAll('*')).some(el => {
+                const t = (el.textContent || '').toLowerCase();
+                return (t.includes('archivos inválidos') || t.includes('scripts maliciosos') || t.includes('archivo no permitido')) && el.children.length === 0;
+            });
+
+            return { totalRows: count, hasErrors: errorIndicator };
+        }""")
+
+        if conteo_restante['totalRows'] == 0:
+            logs.append("  -> ERROR: Todos los archivos fueron rechazados o eliminados por errores en el modal. No hay soportes válidos para radicar.")
+            log_snap = guardar_screenshot_de_error(sura_page, f"sura_arl_{codigo_factura}_sin_archivos_validos")
+            logs.append(f"  - {log_snap}")
+            eliminar_soportes_fallidos()
+            return ESTADO_FALLO, "Sin archivos validos", codigo_factura, "\n".join(logs)
+
+        if conteo_restante['hasErrors']:
+            logs.append("  -> ADVERTENCIA: Aún persiste indicador de error en el modal. Se intentará continuar con los archivos válidos.")
+
+
 
         # --- ESPERAR CARGA COMPLETA DE ARCHIVOS (PROGRESS BARS) ---
         logs.append("  - Esperando que los archivos terminen de cargarse en el portal...")
@@ -671,57 +802,88 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
         
         while time.time() - t_inicio_carga < timeout_carga:
             estado = sura_page.evaluate(r"""() => {
-                const getBars = () => {
-                    let list = Array.from(document.querySelectorAll('ngb-modal-window .progress-bar, ngb-modal-window [role="progressbar"], ngb-modal-window ngb-progressbar .progress-bar'));
-                    if (list.length === 0) {
-                        list = Array.from(document.querySelectorAll('ngb-modal-window *')).filter(el => {
-                            const width = el.style.width || '';
-                            if (!width.endsWith('%')) return false;
-                            const className = (el.className || '').toString().toLowerCase();
-                            const parentClassName = el.parentElement ? (el.parentElement.className || '').toString().toLowerCase() : '';
-                            return className.includes('progress') || 
-                                   className.includes('bar') || 
-                                   parentClassName.includes('progress') || 
-                                   parentClassName.includes('bar') ||
-                                   className.includes('upload') ||
-                                   parentClassName.includes('upload');
-                        });
+                const modal = document.querySelector('ngb-modal-window');
+                if (!modal) return { count: 0, finished: 0, pending: 0 };
+
+                const sigBtn = Array.from(modal.querySelectorAll('button')).find(b => (b.textContent || '').includes('Siguiente'));
+                const siguienteEnabled = sigBtn ? (!sigBtn.disabled && window.getComputedStyle(sigBtn).pointerEvents !== 'none') : false;
+
+                let list = Array.from(modal.querySelectorAll('ngb-modal-window .progress-bar, ngb-modal-window [role="progressbar"], ngb-modal-window ngb-progressbar .progress-bar'));
+                if (list.length === 0) {
+                    list = Array.from(modal.querySelectorAll('ngb-modal-window *')).filter(el => {
+                        const width = el.style.width || '';
+                        if (!width.endsWith('%')) return false;
+                        const className = (el.className || '').toString().toLowerCase();
+                        const parentClassName = el.parentElement ? (el.parentElement.className || '').toString().toLowerCase() : '';
+                        return className.includes('progress') || 
+                               className.includes('bar') || 
+                               parentClassName.includes('progress') || 
+                               parentClassName.includes('bar') ||
+                               className.includes('upload') ||
+                               parentClassName.includes('upload');
+                    });
+                }
+
+                const trashIcons = modal.querySelectorAll('.fa-trash, button[title*="Eliminar"], button[title*="eliminar"], i.fa-trash');
+
+                if (list.length === 0) {
+                    if (trashIcons.length > 0 || siguienteEnabled) {
+                        return { count: trashIcons.length || 1, finished: trashIcons.length || 1, pending: 0 };
                     }
-                    return list;
-                };
-                
-                const bars = getBars();
-                if (bars.length === 0) {
                     return { count: 0, finished: 0, pending: 0 };
                 }
-                
+
                 let finished = 0;
                 let pending = 0;
-                
-                bars.forEach(bar => {
-                    const widthStr = bar.style.width || '';
-                    const widthMatch = widthStr.match(/(\d+(?:\.\d+)?)\s*%/);
-                    const ariaNow = parseFloat(bar.getAttribute('aria-valuenow') || '-1');
-                    const ariaMax = parseFloat(bar.getAttribute('aria-valuemax') || '100');
-                    
+
+                list.forEach(bar => {
                     let isFinished = false;
+
+                    // 1. Verificar inline style o atributo style (ej: width: 100%)
+                    const widthStr = bar.style.width || bar.getAttribute('style') || '';
+                    const widthMatch = widthStr.match(/(\d+(?:\.\d+)?)\s*%/);
                     if (widthMatch) {
                         const val = parseFloat(widthMatch[1]);
-                        if (val >= 99.9) {
+                        if (val >= 98) {
                             isFinished = true;
                         }
-                    } else if (ariaNow >= 0 && ariaNow === ariaMax) {
+                    }
+
+                    // 2. Atributos ARIA (valuenow vs valuemax)
+                    if (!isFinished) {
+                        const ariaNow = parseFloat(bar.getAttribute('aria-valuenow') || '-1');
+                        const ariaMax = parseFloat(bar.getAttribute('aria-valuemax') || '100');
+                        if (ariaNow >= 0 && ariaNow >= ariaMax * 0.98) {
+                            isFinished = true;
+                        }
+                    }
+
+                    // 3. Ancho computado respecto al contenedor padre
+                    if (!isFinished) {
+                        try {
+                            const barStyle = window.getComputedStyle(bar);
+                            const parentStyle = bar.parentElement ? window.getComputedStyle(bar.parentElement) : null;
+                            const barW = parseFloat(barStyle.width || '0');
+                            const parentW = parentStyle ? parseFloat(parentStyle.width || '0') : 0;
+                            if (parentW > 0 && (barW / parentW) >= 0.95) {
+                                isFinished = true;
+                            }
+                        } catch(e) {}
+                    }
+
+                    // 4. Si el botón Siguiente del modal ya está habilitado, los archivos ya terminaron de cargarse
+                    if (!isFinished && siguienteEnabled) {
                         isFinished = true;
                     }
-                    
+
                     if (isFinished) {
                         finished++;
                     } else {
                         pending++;
                     }
                 });
-                
-                return { count: bars.length, finished, pending };
+
+                return { count: list.length, finished, pending };
             }""")
             
             count = estado['count']
@@ -740,26 +902,42 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
                     carga_completa = True
                     break
             
-            time.sleep(2)
+            time.sleep(1)
             
         if not carga_completa:
             logs.append("  -> ADVERTENCIA: Se alcanzó el tiempo límite de espera para la subida de archivos. Se intentará continuar.")
 
-        # Hacer clic en "Siguiente" en el modal
-        sura_page.locator("button.btn-outline-dark:has-text('Siguiente')").click()
+        # Esperar a que el botón Siguiente esté visible y habilitado
+        btn_siguiente = sura_page.locator("button:has-text('Siguiente')")
+        try:
+            btn_siguiente.wait_for(state="visible", timeout=60000)
+            for _ in range(60):
+                if not btn_siguiente.is_disabled():
+                    break
+                time.sleep(1)
+            btn_siguiente.click()
+            logs.append("  - Clic en 'Siguiente'.")
+        except Exception as e_sig:
+            logs.append(f"  - Intento de clic en Siguiente: {e_sig}")
+            btn_siguiente.click(force=True)
+
         time.sleep(1.5)
  
         # Hacer clic en "Confirmar" en el modal
-        sura_page.locator("button.btn-outline-dark:has-text('Confirmar')").click()
+        btn_confirmar = sura_page.locator("button:has-text('Confirmar')")
+        btn_confirmar.wait_for(state="visible", timeout=15000)
+        btn_confirmar.click()
         logs.append("  - Confirmación de subida enviada.")
  
-        # Esperar alerta de éxito
-        alerta_exito = sura_page.locator(".swal2-html-container:has-text('Se han cargado los archivos')")
-        alerta_exito.wait_for(state="visible", timeout=40000)
-        
-        # Clic en "OK" del SweetAlert
-        sura_page.locator("button.swal2-confirm:has-text('OK')").click()
-        logs.append("  - Alerta de subida exitosa confirmada.")
+        # Esperar alerta de éxito de carga (icono success o texto 'cargado' / 'archivos')
+        try:
+            alerta_exito = sura_page.locator(".swal2-popup.swal2-icon-success, .swal2-html-container:has-text('cargado'), .swal2-html-container:has-text('archivos')").first
+            alerta_exito.wait_for(state="visible", timeout=60000)
+            sura_page.locator("button.swal2-confirm").first.click(timeout=5000)
+            logs.append("  - Alerta de subida exitosa confirmada.")
+        except Exception as e_conf:
+            logs.append(f"  - Aviso esperando confirmación de carga: {e_conf}. Verificando botón Radicar...")
+
 
         # Hacer clic en "Radicar"
         sura_page.locator("button:has-text('Radicar')").click()
@@ -792,22 +970,31 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
 
             # Tomar captura de pantalla del SweetAlert exitoso
             screenshot_path = subfolder_path / "temp_rad_screenshot.png"
-            sura_page.screenshot(path=str(screenshot_path))
-            logs.append("  - Captura de pantalla de comprobante guardada temporalmente.")
-
-            # Convertir captura PNG/JPG a PDF
-            pdf_path = subfolder_path / "RAD.pdf"
             try:
-                with Image.open(screenshot_path) as img:
-                    img.convert("RGB").save(pdf_path, "PDF")
-                logs.append(f"  - Comprobante PDF generado: {pdf_path.name}")
-                os.remove(screenshot_path)
-            except Exception as e_pdf:
-                logs.append(f"  - ADVERTENCIA: No se pudo convertir la captura en PDF: {e_pdf}")
+                sura_page.screenshot(path=str(screenshot_path))
+                logs.append("  - Captura de pantalla de comprobante guardada temporalmente.")
+
+                # Convertir captura PNG/JPG a PDF
+                pdf_path = subfolder_path / "RAD.pdf"
+                try:
+                    with Image.open(screenshot_path) as img:
+                        img.convert("RGB").save(pdf_path, "PDF")
+                    logs.append(f"  - Comprobante PDF generado: {pdf_path.name}")
+                except Exception as e_pdf:
+                    logs.append(f"  - ADVERTENCIA: No se pudo convertir la captura en PDF: {e_pdf}")
+            finally:
+                if screenshot_path.is_file():
+                    try:
+                        screenshot_path.unlink()
+                    except Exception:
+                        pass
 
             # Clic en Ok final de la alerta
             sura_page.locator("button.swal2-confirm:has-text('Ok')").click()
             logs.append("  - Clic final en Ok de confirmación.")
+
+            # Eliminar del disco los soportes que no pasaron la validación tras intentar todo
+            eliminar_soportes_fallidos()
 
             return ESTADO_EXITO, radicado, codigo_factura, "\n".join(logs)
             
@@ -818,31 +1005,31 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
             desc_error = " / ".join(lineas_error[:3])
             logs.append(f"  -> ERROR en registro (Modal Atención): {desc_error}")
             
-            # Guardar captura
-            screenshot_path = subfolder_path / "temp_error_screenshot.png"
-            sura_page.screenshot(path=str(screenshot_path))
-            logs.append(f"  - Captura de diagnóstico guardada: {screenshot_path.name}")
+            # Guardar captura en Errores/
+            log_snap = guardar_screenshot_de_error(sura_page, f"sura_arl_{codigo_factura}_error_atencion")
+            logs.append(f"  - {log_snap}")
+            eliminar_soportes_fallidos()
             
             return ESTADO_FALLO, f"Error Registro: {desc_error}", codigo_factura, "\n".join(logs)
             
         else:
             logs.append("  -> ERROR: Tiempo de espera agotado esperando confirmación de registro.")
-            # Guardar captura
-            screenshot_path = subfolder_path / "temp_error_screenshot.png"
-            sura_page.screenshot(path=str(screenshot_path))
-            logs.append(f"  - Captura de diagnóstico guardada: {screenshot_path.name}")
+            # Guardar captura en Errores/
+            log_snap = guardar_screenshot_de_error(sura_page, f"sura_arl_{codigo_factura}_timeout_registro")
+            logs.append(f"  - {log_snap}")
+            eliminar_soportes_fallidos()
             return ESTADO_FALLO, "Timeout Registro", codigo_factura, "\n".join(logs)
 
     except Exception as e:
         error_msg = f"ERROR procesando la carpeta: {e}"
         logs.append(error_msg)
         try:
-            screenshot_path = subfolder_path / "temp_error_screenshot.png"
-            sura_page.screenshot(path=str(screenshot_path))
-            logs.append(f"  - Captura de diagnóstico guardada: {screenshot_path.name}")
+            log_snap = guardar_screenshot_de_error(sura_page, f"sura_arl_{codigo_factura}_excepcion")
+            logs.append(f"  - {log_snap}")
         except Exception as e_snap:
             logs.append(f"  - No se pudo capturar diagnóstico: {e_snap}")
         traceback.print_exc()
+        eliminar_soportes_fallidos()
         return ESTADO_FALLO, "", codigo_factura, "\n".join(logs)
     finally:
         limpiar_pantalla_y_modales(sura_page, logs)
