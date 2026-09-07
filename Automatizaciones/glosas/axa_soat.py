@@ -74,6 +74,23 @@ def login(page: Page) -> tuple[bool, str]:
         return False, "\n".join(logs)
 
 
+def asegurar_formulario_limpio(page: Page) -> None:
+    """Asegura que el formulario esté en un estado limpio antes de procesar una carpeta."""
+    try:
+        if not page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY).is_enabled(timeout=2000):
+            page.reload()
+            expect(page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY)).to_be_enabled(timeout=20000)
+    except Exception:
+        try:
+            page.reload()
+            expect(page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY)).to_be_enabled(timeout=20000)
+        except Exception:
+            pass
+
+def navegar_a_inicio(page: Page) -> tuple[bool, str]:
+    asegurar_formulario_limpio(page)
+    return True, "Formulario AXA verificado y listo."
+
 def llenar_formulario(page: Page, codigo_factura: str, context: str = 'default') -> tuple[bool, str]:
     """Llena los campos del formulario de radicación de AXA."""
     logs = ["Llenando formulario de radicación..."]
@@ -97,22 +114,20 @@ def llenar_formulario(page: Page, codigo_factura: str, context: str = 'default')
         page.locator(AXASOAT_SELECTOR_FECHA_ATENCION).fill(today_str)
         logs.append(f"  - Fecha de Atención: {today_str}")
 
-        # ---- NUEVO: Llenar el N° de Factura con el código extraído ----
+        # ---- Llenar el N° de Factura con el código extraído ----
         page.locator(AXASOAT_SELECTOR_NUMERO_FACTURA).fill(codigo_factura)
         logs.append(f"  - N° Factura: {codigo_factura}")
-        # ----------------------------------------------------------------
 
-        # ---- AÑADIDO: Manejar modal de confirmación de factura ----
+        # Manejar posible modal de confirmación de factura si aparece de forma no bloqueante
         try:
-            logs.append("  - Esperando modal de confirmación de factura...")
-            page.locator(AXASOAT_SELECTOR_MODAL_FACTURA_ACEPTAR).click(timeout=5000)
-            logs.append("  - Modal 'Aceptar' cerrado.")
-        except PlaywrightTimeoutError:
-            logs.append("  - Modal de confirmación no apareció, continuando.")
-        # -----------------------------------------------------------------
+            btn_factura = page.locator("button[selector='Aceptar_button_selector']:visible")
+            if btn_factura.count() > 0:
+                btn_factura.first.click(timeout=2000)
+                logs.append("  - Modal de confirmación cerrado.")
+        except Exception:
+            pass
         
         # 1. Desactivar el checkbox de carga de archivos RIPS
-        # Usamos .uncheck() que es el método específico y seguro para esto.
         page.locator(AXASOAT_SELECTOR_CHECKBOX_RIPS).uncheck()
         logs.append("  - Checkbox 'Desea cargar archivos RIPS' desactivado.")
         
@@ -132,9 +147,6 @@ def llenar_formulario(page: Page, codigo_factura: str, context: str = 'default')
         log_screenshot = guardar_screenshot_de_error(page, "error_formulario_axa")
         logs.append(log_screenshot)
         return False, "\n".join(logs)
-    
-def navegar_a_inicio(page: Page) -> tuple[bool, str]:
-    return True, "Navegación a inicio no es necesaria para AXA, se omite este paso."
 
 def asegurar_extension_pdf_minuscula(pdf_path: Path) -> tuple[Path, str]:
     """
@@ -210,31 +222,33 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, cont
         logs.append(rename_log)
 
         # 3. Interacción Web
+        asegurar_formulario_limpio(page)
         form_ok, form_log = llenar_formulario(page, codigo_factura, context=context)
         logs.append(form_log)
         if not form_ok:
+            asegurar_formulario_limpio(page)
             return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
 
         upload_ok, upload_log = subir_archivo_respuesta(page, path_pdf_final)
         logs.append(upload_log)
         if not upload_ok:
+            asegurar_formulario_limpio(page)
             return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
             
         radicado_final, final_log = enviar_y_finalizar_radicado(page)
         logs.append(final_log)
         if not radicado_final:
+            asegurar_formulario_limpio(page)
             return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
             
         logs.append(f"--- Proceso web para '{subfolder_name}' finalizado. Radicado Web: {radicado_final} ---")
-        
-        # EL PASO DE EMAIL HA SIDO ELIMINADO DE AQUÍ.
-        # Simplemente devolvemos el éxito.
         
         return ESTADO_EXITO, radicado_final, codigo_factura, "\n".join(logs)
 
     except Exception as e:
         error_msg = f"ERROR CRÍTICO en AXA/procesar_carpeta: {e}"
         traceback.print_exc()
+        asegurar_formulario_limpio(page)
         return ESTADO_FALLO, None, None, "\n".join(logs + [error_msg])
 
 def enviar_y_finalizar_radicado(page: Page) -> tuple[str | None, str]:
@@ -249,22 +263,23 @@ def enviar_y_finalizar_radicado(page: Page) -> tuple[str | None, str]:
         expect(page.locator(AXASOAT_SELECTOR_UPLOAD_COMPLETE)).to_be_visible(timeout=60000)
         logs.append("  -> Carga de archivo completada al 100%.")
 
-        # --- NUEVO BLOQUE DE CÓDIGO AÑADIDO PARA MANEJAR EL MODAL ---
-        # 2. Antes de enviar, manejamos el modal de confirmación de factura
+        # 2. Antes de enviar, manejamos el modal intermedio si aparece
         try:
             logs.append("  -> Esperando modal intermedio '¿Desea Continuar?'...")
-            page.locator(AXASOAT_SELECTOR_MODAL_POST_UPLOAD_ACEPTAR).click(timeout=10000)
-            logs.append("  -> Clic en 'Aceptar' en el modal intermedio.")
-        except PlaywrightTimeoutError:
-            # Si el modal no aparece, no es un error. Puede que lo quiten en el futuro.
-            logs.append("  -> ADVERTENCIA: No apareció el modal intermedio '¿Desea Continuar?'. El proceso continúa.")
-        # --- FIN DEL NUEVO BLOQUE ---
+            modal_intermedio = page.locator("div:has-text('¿Desea Continuar?') button[selector='Aceptar_button_selector']")
+            if modal_intermedio.count() > 0 and modal_intermedio.last.is_visible(timeout=2000):
+                modal_intermedio.last.click(timeout=5000)
+                logs.append("  -> Clic en 'Aceptar' en el modal intermedio.")
+            else:
+                logs.append("  -> Modal intermedio no requerido.")
+        except Exception:
+            logs.append("  -> Modal intermedio no apareció. El proceso continúa.")
 
-        # 3. Hacer clic en el botón "Enviar" (ahora debería estar visible y clickeable)
+        # 3. Hacer clic en el botón "Enviar"
         page.locator(AXASOAT_SELECTOR_BOTON_ENVIAR).click()
         logs.append("  -> Clic en 'Enviar'.")
         
-        # 4. Esperar el modal final y extraer el radicado (sin cambios)
+        # 4. Esperar el modal final y extraer el radicado
         modal_final = page.locator(AXASOAT_SELECTOR_MODAL_FINAL_TEXTO)
         expect(modal_final).to_be_visible(timeout=60000)
         logs.append("  -> Modal de confirmación final detectado.")
@@ -275,12 +290,33 @@ def enviar_y_finalizar_radicado(page: Page) -> tuple[str | None, str]:
             radicado_extraido = match.group(1)
             logs.append(f"  -> ¡ÉXITO! Radicado extraído: {radicado_extraido}")
         else:
-            logs.append("  -> ADVERTENCIA: No se pudo extraer el número de radicado del texto del modal.")
+            logs.append(f"  -> ADVERTENCIA: No se pudo extraer el número de radicado del texto: '{texto_popup}'")
 
-        # 5. Cerrar el modal final (sin cambios)
-        page.locator(AXASOAT_SELECTOR_MODAL_FINAL_ACEPTAR).click()
-        expect(page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY)).to_be_enabled(timeout=20000)
-        logs.append("  -> Modal final cerrado. Formulario listo para la siguiente iteración.")
+        # 5. Cerrar el modal final de forma segura evitando violaciones de modo estricto
+        cerrado = False
+        try:
+            # Buscar el botón Aceptar del modal final
+            btn_cerrar = modal_final.locator("xpath=./following::button[contains(., 'Aceptar') or @selector='Aceptar_button_selector']").first
+            if btn_cerrar.is_visible(timeout=2000):
+                btn_cerrar.click(timeout=5000)
+                cerrado = True
+            else:
+                btn_visible = page.locator("button[selector='Aceptar_button_selector']:visible").last
+                if btn_visible.is_visible(timeout=2000):
+                    btn_visible.click(timeout=5000)
+                    cerrado = True
+        except Exception as e_close:
+            logs.append(f"  -> AVISO al cerrar modal final: {e_close}")
+
+        # Si no se cerró limpiamente o el formulario no está habilitado, recargar para garantizar estado limpio
+        try:
+            expect(page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY)).to_be_enabled(timeout=8000)
+            logs.append("  -> Modal final cerrado. Formulario listo para la siguiente iteración.")
+        except Exception:
+            logs.append("  -> Recargando formulario para garantizar estado limpio...")
+            page.reload()
+            expect(page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY)).to_be_enabled(timeout=20000)
+            logs.append("  -> Formulario listo tras recarga.")
         
         return radicado_extraido, "\n".join(logs)
             
@@ -288,4 +324,10 @@ def enviar_y_finalizar_radicado(page: Page) -> tuple[str | None, str]:
         error_msg = f"  -> ERROR en la finalización: {e}"; traceback.print_exc()
         log_screenshot = guardar_screenshot_de_error(page, "error_finalizacion_axa")
         logs.append(log_screenshot)
+        # Si ya teníamos el radicado extraído, salvaguardamos el éxito y restablecemos el formulario
+        if radicado_extraido:
+            logs.append(f"  -> Radicado {radicado_extraido} fue obtenido con éxito a pesar del error secundario.")
+            asegurar_formulario_limpio(page)
+            return radicado_extraido, "\n".join(logs)
+        asegurar_formulario_limpio(page)
         return None, "\n".join(logs + [error_msg])
