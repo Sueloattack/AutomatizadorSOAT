@@ -8,6 +8,15 @@ La estructura de este archivo es la siguiente:
 4.  MAPEO E INTEGRACIÓN DE LA APLICACIÓN: Diccionarios y listas que unen todo para la UI.
 """
 
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Cargar variables de entorno desde el archivo .env ubicado en la raíz del proyecto
+_base_dir = Path(__file__).resolve().parent.parent
+load_dotenv(_base_dir / ".env")
+
+
 # ==============================================================================
 # 1. CONFIGURACIÓN GENERAL DE LA APLICACIÓN
 # ==============================================================================
@@ -133,7 +142,7 @@ AXASOAT_NIT_RAMO_FORM = "8600021846"
 AXASOAT_TIPO_CUENTA_FORM_RESPUESTA_OBJECION = "Respuesta a una objeción"
 AXASOAT_TIPO_CUENTA_FORM_RESPUESTA_LIQUIDACION = "Respuesta de liquidación de pago"
 AXASOAT_CORREO_FORM = "radicacionglosa@asotrauma.com.co"
-AXASOAT_USUARIO_REGISTRA_FORM = "DIANA CAROLINA GIRALDO"
+AXASOAT_USUARIO_REGISTRA_FORM = "CLINICA ASOTRAUMA"
 AXASOAT_SELECTOR_NIT_RAMO = "input[selector='nitramo_selector']"
 AXASOAT_SELECTOR_TIPO_CUENTA = "select[selector='tipo_cuenta_select_selector']"
 AXASOAT_SELECTOR_FECHA_ATENCION = "input[selector='fecha_atencion_date_selector']"
@@ -189,9 +198,9 @@ SURA_ARL_LOGIN_URL = "https://login.sura.com/sso/servicelogin.aspx?continueTo=ht
 # ==============================================================================
 
 # --- Configuración del Lector de Correos (Email Listener) ---
-EMAIL_IMAP_SERVER = "imap.gmail.com"
-EMAIL_USER_ADDRESS = "radicacionglosa@asotrauma.com.co"
-EMAIL_APP_PASSWORD = "mlmk qmln ywim yyax"  # Contraseña de aplicación
+EMAIL_IMAP_SERVER = os.getenv("EMAIL_IMAP_SERVER", "imap.gmail.com")
+EMAIL_USER_ADDRESS = os.getenv("EMAIL_USER_ADDRESS", "radicacionglosa@asotrauma.com.co")
+EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "")  # Debe configurarse en el archivo .env o variable de entorno
 EMAIL_PROCESSED_FOLDER = "Procesados"
 EMAIL_SEARCH_RETRIES = 60
 EMAIL_SEARCH_DELAY_SECONDS = 15

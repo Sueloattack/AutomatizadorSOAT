@@ -22,3 +22,8 @@ Recursos/
 
 # Capturas de error locales
 Errores/
+
+# Variables de entorno y credenciales sensibles
+.env
+.env.local
+.env.*.local
