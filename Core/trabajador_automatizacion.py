@@ -19,6 +19,7 @@ from Configuracion.constantes import (
     ASEGURADORAS_CON_EMAIL_LISTENER,
     PREVISORA_ID,
     MUNDIAL_ESCOLAR_ID,
+    MUNDIAL_SOAT_ID,
     GRUPO_SIS_ID,
     MUNDIAL_ESCOLAR_SEDE1_USER,
     MUNDIAL_ESCOLAR_SEDE1_PASS,
@@ -99,6 +100,10 @@ class TrabajadorAutomatizacion(QtCore.QObject):
 
         if self.aseguradora_id == MUNDIAL_ESCOLAR_ID:
             self.run_mundial_escolar_automation()
+            return
+
+        if self.aseguradora_id == MUNDIAL_SOAT_ID:
+            self.run_mundial_soat_automation()
             return
 
         if self.aseguradora_id == GRUPO_SIS_ID:
@@ -375,4 +380,45 @@ class TrabajadorAutomatizacion(QtCore.QObject):
             )
             self.progreso_update.emit(summary_msg)
             self.finalizado.emit(exitos, fallos, 0, 0, 0)
+
+    def run_mundial_soat_automation(self):
+        self.progreso_update.emit("--- INICIANDO PROCESAMIENTO MUNDIAL SOAT (HiandGo) ---")
+        start_time = time.time()
+        exitos, fallos, omit_rad, no_enc = 0, 0, 0, 0
+        try:
+            from Automatizaciones.glosas.mundial_soat import procesar_glosas_mundial_soat
+            
+            exitos, fallos, omit_rad, no_enc, reporte = procesar_glosas_mundial_soat(
+                str(self.carpeta_contenedora_path),
+                self.input_glosas or "",
+                lambda msg: self.progreso_update.emit(msg),
+                headless=self.headless_mode
+            )
+            
+            if fallos > 0 or no_enc > 0:
+                ruta_fallos = self.carpeta_contenedora_path / "reporte_FALLOS_mundial_soat.txt"
+                with open(ruta_fallos, "w", encoding="utf-8") as f:
+                    f.write(f"--- REPORTE DE INCIDENCIAS MUNDIAL SOAT ---\n\n")
+                    f.write("\n".join(reporte))
+                self.progreso_update.emit(f"[INFO] Reporte de incidencias guardado en: {ruta_fallos.name}")
+
+        except Exception as e:
+            self.error_critico.emit(f"ERROR CRÍTICO EN MUNDIAL SOAT:\n{e}\n{traceback.format_exc()}")
+            return
+        finally:
+            total_time = time.time() - start_time
+            tiempo_formateado = self._formatear_tiempo(total_time)
+            
+            summary_msg = (
+                f"\n--- FIN DEL PROCESO MUNDIAL SOAT ---\n"
+                f"Éxitos (Radicadas OK): {exitos}\n"
+                f"Fallos/No Radicadas: {fallos}\n"
+                f"Omitidas (Ya tenían RAD.pdf): {omit_rad}\n"
+                f"No Encontradas en Plataforma: {no_enc}\n"
+                f"Tiempo Total: {tiempo_formateado}\n"
+                f"{'='*45}"
+            )
+            self.progreso_update.emit(summary_msg)
+            self.finalizado.emit(exitos, fallos, omit_rad, no_enc, 0)
+
 

@@ -11,7 +11,8 @@ try:
     from Core.utilidades import resource_path
     from Configuracion.constantes import (
         APP_VERSION, CONFIGURACION_AREAS, AREA_GLOSAS_ID, 
-        AREA_FACTURACION_ID, MUNDIAL_ESCOLAR_ID, GRUPO_SIS_ID
+        AREA_FACTURACION_ID, MUNDIAL_ESCOLAR_ID, GRUPO_SIS_ID,
+        MUNDIAL_SOAT_ID
     )
     from Automatizaciones.glosas import mundial_escolar
 except ImportError as e:
@@ -329,6 +330,11 @@ class VentanaPrincipal(QtWidgets.QWidget):
             self.grupo_input_glosas.setVisible(True)
             self.grupo_input_glosas.setTitle("4. Pegar Lista de Registros (Factura Estado)")
             self.grupo_seleccion_carpeta.setTitle("5. Seleccionar Carpeta Contenedora (Excel)")
+        elif aseguradora_id == MUNDIAL_SOAT_ID:
+            self.grupo_modo_grupo_sis.setVisible(False)
+            self.grupo_input_glosas.setVisible(True)
+            self.grupo_input_glosas.setTitle("3. Pegar Lista de Glosas (Factura Estado)")
+            self.grupo_seleccion_carpeta.setTitle("4. Seleccionar Carpeta con Soportes")
         else:
             self.grupo_modo_grupo_sis.setVisible(False)
             self.grupo_input_glosas.setVisible(False)
@@ -397,7 +403,7 @@ class VentanaPrincipal(QtWidgets.QWidget):
         self._actualizar_estado_botones(proceso_corriendo=True)
 
         self.hilo_activo = QtCore.QThread(self)
-        input_glosas = self.input_glosas_text.toPlainText() if aseguradora_id == GRUPO_SIS_ID else None
+        input_glosas = self.input_glosas_text.toPlainText() if aseguradora_id in (GRUPO_SIS_ID, MUNDIAL_SOAT_ID) else None
         modo_grupo_sis = self.combo_modo_grupo_sis.currentData() if aseguradora_id == GRUPO_SIS_ID else "glosas"
         
         self.worker_activo = TrabajadorAutomatizacion(

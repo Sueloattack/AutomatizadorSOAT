@@ -105,6 +105,16 @@ PREVISORA_REDUCED_SLEEP_POST_UPLOAD = 0.1
 MUNDIAL_ID = "mundial"
 MUNDIAL_NOMBRE = "Seguros Mundial"
 
+# ------------------------------------------------------------------------------
+# --- MUNDIAL SOAT (HiandGo) ---
+# ------------------------------------------------------------------------------
+MUNDIAL_SOAT_ID = "mundial_soat"
+MUNDIAL_SOAT_NOMBRE = "Mundial SOAT"
+MUNDIAL_SOAT_LOGIN_URL = "https://hiandgo.iq-online.net.co/login"
+MUNDIAL_SOAT_DEFAULT_USER = os.getenv("MUNDIAL_SOAT_USER", "1104938706")
+MUNDIAL_SOAT_DEFAULT_PASS = os.getenv("MUNDIAL_SOAT_PASS", "Asotrauma-2028*")
+MUNDIAL_SOAT_DEFAULT_TOTP = os.getenv("MUNDIAL_SOAT_TOTP_SECRET", "YKVKTNRL3VQRVIOOYRP6Q7JOH7POTBH4")
+
 
 # ------------------------------------------------------------------------------
 # --- MUNDIAL ESCOLAR ---
@@ -226,6 +236,7 @@ PALABRAS_EXCLUSION_CARPETAS = [
 CONFIGURACION_AREAS = {
     AREA_GLOSAS_ID: [
         (PREVISORA_NOMBRE, PREVISORA_ID),
+        (MUNDIAL_SOAT_NOMBRE, MUNDIAL_SOAT_ID),
         (MUNDIAL_NOMBRE, MUNDIAL_ID),
         (AXASOAT_NOMBRE, AXASOAT_ID),
         (MUNDIAL_ESCOLAR_NOMBRE, MUNDIAL_ESCOLAR_ID),
