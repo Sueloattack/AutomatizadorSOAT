@@ -13,6 +13,7 @@ import json  # Para leer resultados
 # Importar generador de PDF
 # Asegúrate que la ruta sea correcta si la carpeta es 'nucleo'
 from .generador_reportes import crear_reporte_pdf
+from .utilidades import normalizar_ruta_carpeta
 
 
 class TrabajadorReporte(QtCore.QObject):
@@ -28,7 +29,7 @@ class TrabajadorReporte(QtCore.QObject):
 
     def __init__(self, carpeta_contenedora):
         super().__init__()
-        self.carpeta_contenedora_path = Path(carpeta_contenedora).resolve()
+        self.carpeta_contenedora_path = normalizar_ruta_carpeta(carpeta_contenedora)
 
     @QtCore.Slot()
     def run_report_generation(self):

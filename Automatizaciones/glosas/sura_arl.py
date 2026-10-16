@@ -4,6 +4,8 @@ import re
 import traceback
 from pathlib import Path
 import os
+import shutil
+import tempfile
 from playwright.sync_api import Page, expect, TimeoutError as PlaywrightTimeoutError
 
 try:
@@ -126,23 +128,29 @@ def navegar_a_inicio(page: Page) -> tuple[bool, str]:
     logs = ["Navegando a la sección de Radicación de Glosas..."]
     try:
         # Capturamos la nueva pestaña que se abrirá al hacer clic en Ingresar
-        with page.context.expect_page() as new_page_info:
+        with page.context.expect_page(timeout=30000) as new_page_info:
             page.locator("button:has-text('Ingresar')").click()
         
         new_page = new_page_info.value
-        new_page.wait_for_load_state()
+        try:
+            new_page.wait_for_load_state("domcontentloaded", timeout=20000)
+        except Exception:
+            pass
         logs.append("  - Nueva pestaña de Prestadores abierta.")
 
         # En lugar de hacer click mediante Playwright (que valida visibilidad), hacemos click directo usando JS
         # Capturando de forma robusta la nueva pestaña que se abre
         enlace_glosas = new_page.locator("a[href*='ConsultaRespGlosas']")
-        enlace_glosas.wait_for(state="attached", timeout=10000)
+        enlace_glosas.wait_for(state="attached", timeout=20000)
         
-        with new_page.context.expect_page() as radicador_page_info:
+        with new_page.context.expect_page(timeout=30000) as radicador_page_info:
             new_page.eval_on_selector("a[href*='ConsultaRespGlosas']", "el => el.click()")
         
         radicador_page = radicador_page_info.value
-        radicador_page.wait_for_load_state()
+        try:
+            radicador_page.wait_for_load_state("domcontentloaded", timeout=20000)
+        except Exception:
+            pass
         logs.append("  - Redirigiendo a Consulta y respuesta a glosas (Nueva pestaña capturada).")
         
         radicador_page.wait_for_selector("input[placeholder='Ingresa número de factura']", timeout=30000)
@@ -389,12 +397,57 @@ def obtener_codigo_factura_corregido(subfolder_path: Path, current_code: str) ->
                     return candidate
     return None
 
+def preparar_directorio_subida(subfolder_path: Path, codigo_factura: str, logs: list) -> tuple[Path, Path | None]:
+    """
+    Prepara una carpeta local limpia en %TEMP% para la carga de soportes en Playwright.
+    Chromium y Playwright presentan timeouts severos al cargar directorios (webkitdirectory)
+    mediante rutas de red UNC (\\\\servidor\\recurso) o que contengan archivos de sistema (Thumbs.db).
+    Esta función copia únicamente los soportes válidos a una carpeta temporal local.
+    
+    Retorna (directorio_a_subir, dir_padre_temporal).
+    """
+    try:
+        staging_parent = Path(tempfile.mkdtemp(prefix=f"sura_up_{codigo_factura}_"))
+        staging_dir = staging_parent / subfolder_path.name
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        
+        allowed_exts = {'.PDF', '.JPG', '.JPEG', '.PNG', '.TIF', '.TIFF', '.XLS', '.XLSX'}
+        archivos_copiados = 0
+        
+        for f in subfolder_path.rglob('*'):
+            if not f.is_file():
+                continue
+            fname_upper = f.name.upper()
+            if fname_upper == "RAD.PDF" or fname_upper.endswith("_ORIGINAL.PDF"):
+                continue
+            if "SCREENSHOT" in fname_upper or "ERROR" in fname_upper or fname_upper.startswith("TEMP_") or fname_upper.startswith("MODAL_"):
+                continue
+            if f.suffix.upper() not in allowed_exts:
+                continue
+                
+            dest = staging_dir / f.name
+            shutil.copy2(f, dest)
+            archivos_copiados += 1
+            
+        if archivos_copiados > 0:
+            logs.append(f"  - Preparado directorio local de carga ({archivos_copiados} archivos): {staging_dir.name}")
+            return staging_dir, staging_parent
+        else:
+            shutil.rmtree(staging_parent, ignore_errors=True)
+            logs.append("  - ADVERTENCIA: No se encontraron soportes válidos para staging temporal.")
+            return subfolder_path, None
+            
+    except Exception as e_prep:
+        logs.append(f"  - ADVERTENCIA: No se pudo preparar carpeta temporal: {e_prep}. Se usará ruta directa.")
+        return subfolder_path, None
+
 def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context: str = 'default') -> tuple[str, str, str, str]:
     """Procesa una factura/carpeta en el radicador de SURA ARL."""
     logs = [f"--- Iniciando Playwright/SURA ARL para: '{folder_name}' ---"]
     codigo_factura = folder_name.upper()
     radicado = ""
     archivos_que_no_pasaron = set()
+    staging_parent = None
 
     def eliminar_soportes_fallidos():
         """Elimina del disco local los soportes que no hayan pasado la validación tras intentar todo."""
@@ -631,9 +684,10 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
         """)
         logs.append("  - Interceptor de Angular component.dropped inyectado de manera robusta.")
 
-        # Subir el directorio completo directamente ya que el input tiene webkitdirectory=true
-        input_file.set_input_files(str(subfolder_path.resolve()))
-        logs.append(f"  - Subiendo directorio completo: {subfolder_path.name}...")
+        # Subir el directorio de soportes (usando staging local para evitar bloqueos UNC de Chromium)
+        ruta_subida, staging_parent = preparar_directorio_subida(subfolder_path, codigo_factura, logs)
+        input_file.set_input_files(str(ruta_subida))
+        logs.append(f"  - Subiendo directorio de soportes: {subfolder_path.name}...")
         time.sleep(3)
 
         # Esperar a que se listen los archivos o aparezca SweetAlert
@@ -1032,4 +1086,9 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
         eliminar_soportes_fallidos()
         return ESTADO_FALLO, "", codigo_factura, "\n".join(logs)
     finally:
+        if staging_parent and staging_parent.exists():
+            try:
+                shutil.rmtree(staging_parent, ignore_errors=True)
+            except Exception:
+                pass
         limpiar_pantalla_y_modales(sura_page, logs)

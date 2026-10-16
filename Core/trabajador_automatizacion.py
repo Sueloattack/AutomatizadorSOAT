@@ -27,7 +27,7 @@ from Configuracion.constantes import (
     MUNDIAL_ESCOLAR_SEDE2_PASS
 )
 from .trabajador_email import EmailListenerWorker
-from .utilidades import consolidar_radicados_pdf, separar_carpetas_por_sede
+from .utilidades import consolidar_radicados_pdf, separar_carpetas_por_sede, normalizar_ruta_carpeta
 from Automatizaciones.glosas import mundial_escolar
 
 class TrabajadorAutomatizacion(QtCore.QObject):
@@ -40,7 +40,7 @@ class TrabajadorAutomatizacion(QtCore.QObject):
         super().__init__()
         self.area_id = area_id
         self.aseguradora_id = aseguradora_id
-        self.carpeta_contenedora_path = Path(carpeta_contenedora).resolve()
+        self.carpeta_contenedora_path = normalizar_ruta_carpeta(carpeta_contenedora)
         self.headless_mode = modo_headless
         self.input_glosas = input_glosas
         self.modo_grupo_sis = modo_grupo_sis
@@ -121,6 +121,7 @@ class TrabajadorAutomatizacion(QtCore.QObject):
                 module_path = f"Automatizaciones.{self.area_id}.{self.aseguradora_id}"
                 try:
                     automation_module = importlib.import_module(module_path)
+                    automation_module = importlib.reload(automation_module)
                     login_func = automation_module.login
                     navegar_inicio_func = automation_module.navegar_a_inicio
                     procesar_carpeta_func = automation_module.procesar_carpeta

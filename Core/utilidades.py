@@ -34,6 +34,32 @@ def resource_path(relative_path):
     path_to_resource = os.path.join(base_path, relative_path)
     return path_to_resource
 
+def normalizar_ruta_carpeta(ruta_input: str | Path) -> Path:
+    """
+    Convierte una ruta a Path absoluto sin forzar la resolución a UNC si ya es una unidad
+    de red mapeada (ej: X:\\), y si es una ruta UNC intenta mapearla a la unidad de red
+    correspondiente para evitar bloqueos en navegadores y Playwright/Chromium.
+    """
+    ruta_str = str(ruta_input).strip()
+    if ruta_str.startswith("\\\\") or ruta_str.startswith("//"):
+        try:
+            import ctypes, string
+            mpr = ctypes.windll.mpr
+            p_norm = os.path.normpath(ruta_str)
+            for letter in string.ascii_uppercase:
+                drive = f"{letter}:"
+                buf = ctypes.create_unicode_buffer(512)
+                buf_size = ctypes.c_ulong(512)
+                if mpr.WNetGetConnectionW(drive, buf, ctypes.byref(buf_size)) == 0:
+                    unc_remote = os.path.normpath(buf.value)
+                    if p_norm.lower().startswith(unc_remote.lower()):
+                        rel = p_norm[len(unc_remote):].lstrip("\\/")
+                        return Path(f"{drive}\\{rel}")
+        except Exception:
+            pass
+        return Path(ruta_str)
+    return Path(ruta_str).absolute()
+
 # Reemplaza la función en utilidades.py
 def encontrar_y_validar_pdfs(
     subfolder_path: Path, nombre_subcarpeta: str, nombre_aseguradora_en_pdf: str
@@ -42,7 +68,7 @@ def encontrar_y_validar_pdfs(
     Busca y valida los PDFs de Glosa de forma estricta.
     Solo procederá si encuentra tanto la carta de glosa como la respuesta de glosa.
     """
-    subfolder_path = subfolder_path.resolve()
+    subfolder_path = normalizar_ruta_carpeta(subfolder_path)
     log_prefix = f"[{nombre_subcarpeta}] "
     log_messages = [f"{log_prefix}Validando PDFs (Lógica Estricta)... "]
 
@@ -116,7 +142,7 @@ def encontrar_documentos_facturacion(subfolder_path: Path, nombre_subcarpeta: st
     - Un diccionario con las rutas a los 3 archivos encontrados.
     - Un log del proceso.
     """
-    subfolder_path = subfolder_path.resolve()
+    subfolder_path = normalizar_ruta_carpeta(subfolder_path)
     log_prefix = f"[{nombre_subcarpeta}] "
     log_messages = [f"{log_prefix}Buscando documentos de Facturación..."]
 
@@ -230,7 +256,7 @@ def encontrar_documentos_facturacion_axa(subfolder_path: Path, nombre_subcarpeta
     incluyendo ahora el JSON (RIPS) y el XML (FEV).
     Devuelve: (codigo_factura, cuv, diccionario_archivos_a_subir, log)
     """
-    subfolder_path = subfolder_path.resolve()
+    subfolder_path = normalizar_ruta_carpeta(subfolder_path)
     log_prefix = f"[{nombre_subcarpeta}] "
     logs = [f"{log_prefix}Buscando archivos requeridos para AXA Facturación..."]
     
@@ -312,8 +338,8 @@ def guardar_screenshot_de_error(page, nombre_base: str):
         # Construir la ruta completa
         ruta_screenshot = error_dir / filename
         
-        # Tomar la captura de pantalla
-        page.screenshot(path=ruta_screenshot)
+        # Tomar la captura de pantalla con timeout de seguridad
+        page.screenshot(path=ruta_screenshot, timeout=5000)
         
         # Devolver la ruta donde se guardó para poder registrarla en el log
         return f"Screenshot de error guardado en: {ruta_screenshot}"

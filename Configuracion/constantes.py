@@ -139,38 +139,42 @@ AXASOAT_NOMBRE_EN_PDF = "AXA COLPATRIA SEGUROS S.A."
 
 # --- Página de Login (AXA) ---
 AXASOAT_LOGIN_URL = "https://axa.claimonline.com.co/"
+AXASOAT_CORREO_LOGIN = "radicacionglosa@asotrauma.com.co"
 AXASOAT_TIPO_RECLAMANTE_LOGIN = "IPS"
+AXASOAT_TIPO_RECLAMANTE_VAL = "1"
 AXASOAT_DOCUMENTO_LOGIN = "8002098917"
+AXASOAT_SELECTOR_LOGIN_CORREO = "input[placeholder='Ingresar correo']"
+AXASOAT_SELECTOR_LOGIN_TIPO_RECLAMANTE = "select"
+AXASOAT_SELECTOR_LOGIN_DOCUMENTO = "input[placeholder*='documento']"
+AXASOAT_SELECTOR_LOGIN_BOTON = "button:has-text('Iniciar sesión')"
+AXASOAT_SELECTOR_OTP_INPUT = "input[placeholder='Ingresar código']"
+AXASOAT_SELECTOR_OTP_VALIDAR = "button:has-text('Validar')"
+AXASOAT_SELECTOR_ICONO_RECEPCION = "mok-icon[name='reader-outline']"
 AXASOAT_SELECTOR_TIPO_RECLAMANTE = "select[selector='tipo_cuenta_select_selector']"
 AXASOAT_SELECTOR_DOCUMENTO = "input[selector='nit_selector']"
 AXASOAT_SELECTOR_BOTON_LOGIN = "button[selector='Login_button_selector']"
 AXASOAT_SELECTOR_MODAL_ACEPTAR = "button:has-text('Aceptar')"
 
 # --- Formulario de Radicación (AXA) ---
-AXASOAT_SELECTOR_FORMULARIO_VERIFY = "input[selector='nitramo_selector']"  # Elemento clave para verificar carga
+AXASOAT_SELECTOR_FORMULARIO_VERIFY = "input.input-number-nit, input[placeholder*='NIT ramo SOAT Colpatria']"  # Elemento clave para verificar carga
 AXASOAT_NIT_RAMO_FORM = "8600021846"
 AXASOAT_TIPO_CUENTA_FORM_RESPUESTA_OBJECION = "Respuesta a una objeción"
 AXASOAT_TIPO_CUENTA_FORM_RESPUESTA_LIQUIDACION = "Respuesta de liquidación de pago"
 AXASOAT_CORREO_FORM = "radicacionglosa@asotrauma.com.co"
-AXASOAT_USUARIO_REGISTRA_FORM = "CLINICA ASOTRAUMA"
-AXASOAT_SELECTOR_NIT_RAMO = "input[selector='nitramo_selector']"
-AXASOAT_SELECTOR_TIPO_CUENTA = "select[selector='tipo_cuenta_select_selector']"
-AXASOAT_SELECTOR_FECHA_ATENCION = "input[selector='fecha_atencion_date_selector']"
-AXASOAT_SELECTOR_NUMERO_FACTURA = "input[selector='numero_factura_input_selector']"
-AXASOAT_SELECTOR_CORREO = "input[selector='email_input_selector']"
-AXASOAT_SELECTOR_USUARIO_REGISTRA = "input[name='usuario_registro']"
+AXASOAT_USUARIO_REGISTRA_FORM = "clinica asotrauma"
+AXASOAT_SELECTOR_NIT_RAMO = "input.input-number-nit, input[placeholder*='NIT ramo SOAT Colpatria']"
+AXASOAT_SELECTOR_NUMERO_FACTURA = "input[name='invoiceNumber']"
+AXASOAT_SELECTOR_USUARIO_REGISTRA = "input[name='userRegister']"
+AXASOAT_SELECTOR_TIPO_CUENTA_INPUT = "input[data-analytics='input-select-accountType'], input[placeholder='Seleccione una opción']"
 
 # --- Subida y Envío de Formulario (AXA) ---
-AXASOAT_SELECTOR_CHECKBOX_RIPS = "input[name='check_service']"
-AXASOAT_SELECTOR_INPUT_FILE = "input[name='otros']"
-AXASOAT_SELECTOR_BOTON_ENVIAR = "button[selector='Enviar_button_selector']"
-AXASOAT_SELECTOR_UPLOAD_COMPLETE = "span:has-text('100%')"
+AXASOAT_SELECTOR_INPUT_FILE = "input[type='file'][name='others']"
+AXASOAT_SELECTOR_BOTON_GUARDAR = "button:has-text('Guardar información')"
+AXASOAT_SELECTOR_UPLOAD_COMPLETE = "mok-input-multiplefiles span.bg-primary:has-text('1')"
 
 # --- Pop-ups y Modales (AXA) ---
-AXASOAT_SELECTOR_MODAL_FACTURA_ACEPTAR = "button[selector='Aceptar_button_selector']"
-AXASOAT_SELECTOR_MODAL_POST_UPLOAD_ACEPTAR = "div:has-text('¿Desea Continuar?') >> button[selector='Aceptar_button_selector']"
-AXASOAT_SELECTOR_MODAL_FINAL_TEXTO = "p:has-text('reclamacion registrada correctamente')"
-AXASOAT_SELECTOR_MODAL_FINAL_ACEPTAR = "p:has-text('reclamacion registrada correctamente') >> xpath=./following::button[1]"
+AXASOAT_SELECTOR_MODAL_FACTURA_ACEPTAR = "button:has-text('Aceptar')"
+AXASOAT_SELECTOR_MODAL_FINAL_TEXTO = "p:has-text('reclamacion registrada correctamente'), div:has-text('registrada correctamente'), div:has-text('Reclamación registrada')"
 AXASOAT_TIPO_CUENTA_FORM_FACTURACION = "Factura presentada por primera vez"
 AXASOAT_CORREO_FACTURACION = "facturacion@asotrauma.com.co"           
 AXASOAT_USUARIO_REGISTRA_FACTURACION = "clinica asotrauma"             
@@ -237,7 +241,6 @@ CONFIGURACION_AREAS = {
     AREA_GLOSAS_ID: [
         (PREVISORA_NOMBRE, PREVISORA_ID),
         (MUNDIAL_SOAT_NOMBRE, MUNDIAL_SOAT_ID),
-        (MUNDIAL_NOMBRE, MUNDIAL_ID),
         (AXASOAT_NOMBRE, AXASOAT_ID),
         (MUNDIAL_ESCOLAR_NOMBRE, MUNDIAL_ESCOLAR_ID),
         (GRUPO_SIS_NOMBRE, GRUPO_SIS_ID),
@@ -252,5 +255,5 @@ CONFIGURACION_AREAS = {
 # --- Listas de Comportamiento Especial por Aseguradora ---
 # Define qué aseguradoras requieren que se active el lector de correos.
 ASEGURADORAS_CON_EMAIL_LISTENER = [
-    AXASOAT_ID,
+    # AXASOAT_ID, # Deshabilitado temporalmente: actualmente AXA no envía soporte al correo
 ]
