@@ -15,6 +15,7 @@ a = Analysis(
         'requests',
         'Automatizaciones.glosas.previsora',
         'Automatizaciones.glosas.axa_soat',
+        'Automatizaciones.glosas.mundial_soat',
         'Automatizaciones.glosas.mundial_escolar',
         'Automatizaciones.glosas.grupo_sis',
         'Automatizaciones.glosas.sura_arl',

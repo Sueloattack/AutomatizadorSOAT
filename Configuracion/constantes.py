@@ -239,7 +239,7 @@ PALABRAS_EXCLUSION_CARPETAS = [
 # Define qué aseguradoras están disponibles en cada área del negocio.
 CONFIGURACION_AREAS = {
     AREA_GLOSAS_ID: [
-        (PREVISORA_NOMBRE, PREVISORA_ID),
+        # (PREVISORA_NOMBRE, PREVISORA_ID),  # Desactivado temporalmente
         (MUNDIAL_SOAT_NOMBRE, MUNDIAL_SOAT_ID),
         (AXASOAT_NOMBRE, AXASOAT_ID),
         (MUNDIAL_ESCOLAR_NOMBRE, MUNDIAL_ESCOLAR_ID),
@@ -247,7 +247,7 @@ CONFIGURACION_AREAS = {
         (SURA_ARL_NOMBRE, SURA_ARL_ID),
     ],
     AREA_FACTURACION_ID: [
-        (PREVISORA_NOMBRE, PREVISORA_ID),
+        # (PREVISORA_NOMBRE, PREVISORA_ID),  # Desactivado temporalmente
         (AXASOAT_NOMBRE, AXASOAT_ID),
     ]
 }
