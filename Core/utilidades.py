@@ -300,13 +300,14 @@ def encontrar_documentos_facturacion_axa(subfolder_path: Path, nombre_subcarpeta
 
         logs.append(f"{log_prefix}  -> Validación OK. Todos los archivos encontrados.")
         
-        # <<< CAMBIO: Ahora devolvemos 5 archivos para subir >>>
+        # 6 archivos para subir (incluyendo el archivo TXT de CUV)
         archivos_a_subir = {
             "factura": encontrados["factura_pdf"],
             "furips": encontrados["furips_pdf"],
             "hc": encontrados["hc_pdf"],
             "rips": encontrados["coex_json"],
-            "fev": encontrados["coex_xml"]
+            "fev": encontrados["coex_xml"],
+            "cuv_file": encontrados["resultados_json"]
         }
         
         return codigo_factura, cuv, archivos_a_subir, "\n".join(logs)
