@@ -220,6 +220,21 @@ def enviar_y_finalizar_radicado(page: Page, subfolder_path: Path, codigo_factura
     """
     logs = ["Finalizando el proceso de radicación..."]
     radicado_extraido = None
+    response_radicado = []
+
+    def on_response(res):
+        if "reception" in res.url:
+            try:
+                txt = res.text()
+                m = re.search(r"creada\s+con\s+[eé]xito\s+(\d+)", txt, re.IGNORECASE) or \
+                    re.search(r"Ok.*?(\d{7,10})", txt, re.IGNORECASE)
+                if m:
+                    response_radicado.append(m.group(1))
+            except Exception:
+                pass
+
+    page.on("response", on_response)
+
     try:
         # Sincronización precisa de React Fiber
         try:
@@ -271,7 +286,6 @@ def enviar_y_finalizar_radicado(page: Page, subfolder_path: Path, codigo_factura
             page.wait_for_timeout(300)
         except Exception:
             pass
-
         # Clic en 'Guardar información'
         boton_guardar = page.locator("button:has-text('Guardar información')").last
         boton_guardar.wait_for(state="visible", timeout=10000)
@@ -285,21 +299,30 @@ def enviar_y_finalizar_radicado(page: Page, subfolder_path: Path, codigo_factura
             page.wait_for_timeout(1000)
             txt_actual = ""
             try:
-                txt_actual = page.locator("div.modal-content, mok-modal").first.inner_text()
+                txt_actual = page.locator("div.modal-content, mok-modal").last.inner_text()
             except Exception:
                 pass
-            if "enviando la información" not in txt_actual.lower() and ("creada con éxito" in txt_actual.lower() or "importante" in txt_actual.lower() or "exitoso" in txt_actual.lower()):
+            if "enviando la información" not in txt_actual.lower() and ("creada con éxito" in txt_actual.lower() or "importante" in txt_actual.lower() or "exitoso" in txt_actual.lower() or response_radicado):
                 break
 
         page.wait_for_timeout(2000)
 
         modal_text = ""
         try:
-            modal_loc = page.locator("div.modal-content, mok-modal").first
-            if modal_loc.is_visible():
-                modal_text = modal_loc.inner_text()
+            # Recorrer todos los modales visibles y capturar el texto
+            for m_elem in page.locator("div.modal-content, mok-modal").all():
+                if m_elem.is_visible():
+                    t = m_elem.inner_text()
+                    if t:
+                        modal_text += "\n" + t
         except Exception:
             pass
+
+        if not modal_text.strip():
+            try:
+                modal_text = page.locator("body").inner_text()
+            except Exception:
+                pass
 
         if "Verifique los campos requeridos" in modal_text or "error al enviar" in modal_text.lower():
             logs.append(f"  -> ERROR en validación del formulario: {modal_text.strip()}")
@@ -313,6 +336,10 @@ def enviar_y_finalizar_radicado(page: Page, subfolder_path: Path, codigo_factura
 
         if match:
             radicado_extraido = match.group(1)
+        elif response_radicado:
+            radicado_extraido = response_radicado[-1]
+
+        if radicado_extraido:
             logs.append(f"  -> ¡ÉXITO! Radicado obtenido: {radicado_extraido}")
             try:
                 nombre_pdf = f"{codigo_factura}-radicado-{radicado_extraido}.pdf"
