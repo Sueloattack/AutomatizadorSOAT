@@ -385,10 +385,10 @@ def llenar_formulario(page: Page, codigo_factura: str, subfolder_path: Path | No
         inv_loc.evaluate("el => el.blur()")
         logs.append(f"  - N° Factura: {codigo_factura.upper()}")
 
-        # Esperar hasta 5 segundos a que la API responda o aparezca el modal de factura informativa
-        for _ in range(10):
+        # Esperar hasta 6 segundos a que la API responda o aparezca el modal de factura informativa
+        for _ in range(12):
             page.wait_for_timeout(350)
-            modal_loc = page.locator("div.modal-content").first
+            modal_loc = page.locator("div.modal-content, mok-modal").first
             modal_visible = False
             modal_txt = ""
             try:
@@ -398,28 +398,38 @@ def llenar_formulario(page: Page, codigo_factura: str, subfolder_path: Path | No
             except Exception:
                 pass
 
-            if modal_visible and ("fue recibida" in modal_txt.lower() or "siguiente reclamaci" in modal_txt.lower()):
+            if modal_visible and ("fue recibida" in modal_txt.lower() or "siguiente reclamaci" in modal_txt.lower() or "importante" in modal_txt.lower()):
                 logs.append("  - AVISO: Mensaje de 'Factura fue recibida' detectado. Cerrando modal con ACEPTAR para continuar...")
                 try:
-                    btn_modal_inv = page.locator("div.modal-content button:has-text('ACEPTAR'), div.modal-content button:has-text('Aceptar'), button:has-text('ACEPTAR'), button:has-text('Aceptar')").last
+                    btn_modal_inv = page.locator("div.modal-content button:has-text('ACEPTAR'), div.modal-content button:has-text('Aceptar'), mok-modal button:has-text('ACEPTAR'), mok-modal button:has-text('Aceptar'), button:has-text('ACEPTAR'), button:has-text('Aceptar')").last
                     if btn_modal_inv.is_visible(timeout=3000):
-                        btn_modal_inv.click()
+                        btn_modal_inv.click(force=True)
                         logs.append("  - Modal informativo cerrado con clic en ACEPTAR.")
                 except Exception:
                     pass
                 page.wait_for_timeout(1000)
                 try:
-                    if page.locator("div.modal-content button").count() > 0:
-                        page.locator("div.modal-content button").last.click(force=True)
+                    # Cerrar también cualquier botón dentro de mok-modal
+                    for b in page.locator("mok-modal button, div.modal-content button").all():
+                        if b.is_visible():
+                            b.click(force=True)
                 except Exception:
                     pass
                 break
 
-        # Asegurar que ningún modal residual quedó abierto
+        # Asegurar que ningún modal o backdrop residual quedó abierto
         try:
-            btn_mod = page.locator("div.modal-content button:has-text('ACEPTAR'), div.modal-content button:has-text('Aceptar')").last
-            if btn_mod.is_visible(timeout=1000):
-                btn_mod.click()
+            page.evaluate("""() => {
+                const btns = document.querySelectorAll('mok-modal button, div.modal-content button, button.mx-auto');
+                btns.forEach(b => {
+                    if (b.innerText && (b.innerText.includes('ACEPTAR') || b.innerText.includes('Aceptar'))) {
+                        b.click();
+                    }
+                });
+                // Cerrar overlay en caso de haber quedado abierto
+                const overlays = document.querySelectorAll('div[class*="backdrop-blur"], div[class*="bg-[#00000050]"]');
+                overlays.forEach(o => o.click());
+            }""")
         except Exception:
             pass
         page.wait_for_timeout(500)
@@ -456,17 +466,26 @@ def llenar_formulario(page: Page, codigo_factura: str, subfolder_path: Path | No
 
         # Clic en el select/dropdown de tipo de cuenta
         tipo_cta_input = page.locator("input[data-analytics='input-select-accountType'], input[placeholder='Seleccione una opción']").first
-        tipo_cta_input.click()
+        try:
+            tipo_cta_input.click(timeout=5000)
+        except Exception:
+            tipo_cta_input.click(force=True)
         page.wait_for_timeout(500)
 
         # Buscar la opción correspondiente en el desplegable
         palabra_clave = "liquidaci" if context == "aceptadas" else "objeci"
         opcion_locator = page.locator(f"text=/{palabra_clave}/i").last
         if opcion_locator.is_visible(timeout=3000):
-            opcion_locator.click()
+            try:
+                opcion_locator.click(timeout=3000)
+            except Exception:
+                opcion_locator.click(force=True)
             logs.append(f"  - Tipo de cuenta seleccionado: '{tipo_cuenta_label}'")
         else:
-            page.locator(f"div:has-text('{tipo_cuenta_label}'), span:has-text('{tipo_cuenta_label}'), li:has-text('{tipo_cuenta_label}')").last.click()
+            try:
+                page.locator(f"div:has-text('{tipo_cuenta_label}'), span:has-text('{tipo_cuenta_label}'), li:has-text('{tipo_cuenta_label}')").last.click(force=True)
+            except Exception:
+                pass
             logs.append(f"  - Tipo de cuenta seleccionado vía texto: '{tipo_cuenta_label}'")
 
         page.wait_for_timeout(500)
