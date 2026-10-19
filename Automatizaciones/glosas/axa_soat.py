@@ -165,6 +165,15 @@ def login(page: Page) -> tuple[bool, str]:
             logs.append(error_msg)
             return False, "\n".join(logs)
 
+        # Cerrar posible modal de comunicado inicial si aparece
+        try:
+            btn_close_init = page.locator("mok-icon[name='close-outline'], div[class*='z-[999]'] button, mok-modal button").first
+            if btn_close_init.is_visible(timeout=3000):
+                btn_close_init.click(force=True)
+                page.wait_for_timeout(1000)
+        except Exception:
+            pass
+
         # 2. Llenar los datos de acceso
         # Rellenar visualmente con Playwright
         page.locator("input[placeholder='Ingresar correo']").fill(AXASOAT_CORREO_LOGIN)
@@ -231,8 +240,9 @@ def login(page: Page) -> tuple[bool, str]:
             # Verificar si ya entró al dashboard, recepción o desapareció el botón de inicio de sesión
             if (
                 "dashboard" in page.url
-                or "reception" in page.url
-                or page.locator("mok-icon[name='reader-outline']").count() > 0
+                or "recepcion" in page.url
+                or page.locator("mok-menu-dashboard").count() > 0
+                or page.locator("mok-tooltip[data-name-tag='2']").count() > 0
                 or page.locator("button:has-text('Iniciar sesión')").count() == 0
             ):
                 logs.append(f"  - Sesión iniciada con éxito. URL actual: {page.url}")
@@ -241,30 +251,30 @@ def login(page: Page) -> tuple[bool, str]:
             logs.append("  - Aviso: Verificando estado de la página tras iniciar sesión...")
 
         page.wait_for_timeout(2000)
-        # Cerrar posible modal de notificación si intercepta
+        # Cerrar posible modal o banner de notificación post-login
         try:
+            page.evaluate("""() => {
+                const closeBtns = document.querySelectorAll("div[class*='z-[99999]'] button, div[class*='z-[999]'] button, mok-icon[name='close-outline']");
+                closeBtns.forEach(b => b.click());
+            }""")
             btn_close = page.locator("div[class*='z-[999]'] button, div[class*='z-[99999]'] button, mok-modal button").first
-            if btn_close.is_visible(timeout=2000):
+            if btn_close.is_visible(timeout=1500):
                 btn_close.click(force=True)
         except Exception:
             pass
 
-        # 7. Navegar a Recepción haciendo clic en el icono correspondiente o vía URL
+        # 4. Navegar a Recepción haciendo clic en el menú interno de la SPA
         page.wait_for_timeout(1500)
         try:
             if "recepcion" not in page.url.lower():
-                current_origin = "https://axa.claimhunting.com.co" if "claimhunting" in page.url.lower() else "https://axa.claimonline.com.co"
-                page.goto(f"{current_origin}/dashboard/recepcion", timeout=15000)
-                logs.append("  - Navegación directa a Recepción.")
-        except Exception:
-            pass
-
-        # Buscar el botón o tooltip de recepción como respaldo
-        boton_recepcion = page.locator("mok-tooltip[data-name-tag='2'], mok-icon[name='reader-outline']").first
-        try:
-            if boton_recepcion.is_visible(timeout=5000):
-                boton_recepcion.click(force=True)
-                logs.append("  - Clic en módulo de Recepción.")
+                page.evaluate("""() => {
+                    const tt2 = document.querySelector('mok-tooltip[data-name-tag="2"]');
+                    if (tt2) {
+                        const clickable = tt2.querySelector('div') || tt2;
+                        clickable.click();
+                    }
+                }""")
+                logs.append("  - Navegación al módulo de Recepción.")
         except Exception:
             pass
 
@@ -280,22 +290,29 @@ def login(page: Page) -> tuple[bool, str]:
                 if page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY).first.is_visible():
                     form_cargado = True
                     break
-                # Clic en el icono de recepcion
-                btn_rec = page.locator("mok-tooltip[data-name-tag='2'], mok-icon[name='reader-outline']").first
-                if btn_rec.is_visible():
-                    btn_rec.click(force=True)
+                # Clic en el icono de recepcion vía JS interno de la SPA
+                page.evaluate("""() => {
+                    const tt2 = document.querySelector('mok-tooltip[data-name-tag="2"]');
+                    if (tt2) {
+                        const clickable = tt2.querySelector('div') || tt2;
+                        clickable.click();
+                    }
+                }""")
                 page.wait_for_timeout(3000)
                 if page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY).first.is_visible():
                     form_cargado = True
                     break
-                # Navegar directamente a la ruta
-                current_origin = "https://axa.claimhunting.com.co" if "claimhunting" in page.url.lower() else "https://axa.claimonline.com.co"
-                page.goto(f"{current_origin}/claimonline/dashboard/recepcion" if "claimonline" in page.url else f"{current_origin}/dashboard/recepcion", timeout=15000)
-                page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY).first.wait_for(state="visible", timeout=15000)
-                form_cargado = True
-                break
+                page.wait_for_timeout(2000)
             except Exception:
                 page.wait_for_timeout(2000)
+
+        # Cerrar cualquier modal residual que bloquee la vista
+        try:
+            btn_modal_res = page.locator("div.modal-content button, button:has-text('ACEPTAR'), button:has-text('Aceptar')").first
+            if btn_modal_res.is_visible(timeout=1500):
+                btn_modal_res.click(force=True)
+        except Exception:
+            pass
 
         if form_cargado:
             logs.append("Login exitoso en AXA SOAT y formulario de Recepción cargado.")
@@ -329,12 +346,18 @@ def asegurar_formulario_limpio(page: Page) -> None:
         except Exception:
             pass
 
-        # 2. Recargar completamente el formulario de recepción para reiniciar inputs y archivos adjuntos
+        # 2. Recargar o navegar al formulario de recepción
         try:
             if "recepcion" in page.url.lower():
                 page.reload()
             else:
-                page.goto("https://axa.claimhunting.com.co/dashboard/recepcion", timeout=15000)
+                page.evaluate("""() => {
+                    const tt2 = document.querySelector('mok-tooltip[data-name-tag="2"]');
+                    if (tt2) {
+                        const clickable = tt2.querySelector('div') || tt2;
+                        clickable.click();
+                    }
+                }""")
             page.wait_for_timeout(1500)
         except Exception:
             pass
@@ -343,11 +366,13 @@ def asegurar_formulario_limpio(page: Page) -> None:
         try:
             page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY).first.wait_for(state="visible", timeout=15000)
         except Exception:
-            btn_rec_fallback = page.locator("mok-icon[name='reader-outline']").first
-            if btn_rec_fallback.is_visible(timeout=2000):
-                btn_rec_fallback.click(force=True)
-            else:
-                page.goto("https://axa.claimhunting.com.co/dashboard/recepcion", timeout=15000)
+            page.evaluate("""() => {
+                const tt2 = document.querySelector('mok-tooltip[data-name-tag="2"]');
+                if (tt2) {
+                    const clickable = tt2.querySelector('div') || tt2;
+                    clickable.click();
+                }
+            }""")
             page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY).first.wait_for(state="visible", timeout=20000)
 
         # 3. Limpiar inputs si quedaron restos
