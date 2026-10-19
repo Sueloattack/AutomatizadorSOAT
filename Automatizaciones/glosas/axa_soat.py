@@ -743,7 +743,17 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, cont
             return ESTADO_OMITIDO_RADICADO, None, None, "\n".join(logs)
 
         # 2. Verificar si ya está radicada
-        if any(f.name.lower().endswith("-recibido.pdf") or "-radicado" in f.name.lower() for f in subfolder_path.iterdir() if f.is_file()):
+        def es_archivo_radicado(f: Path) -> bool:
+            name_lower = f.name.lower()
+            if name_lower.endswith("-recibido.pdf") or "-radicado" in name_lower:
+                return True
+            # Soporte oficial del correo con nombre numérico (ej: 23250038.pdf)
+            stem = f.stem
+            if stem.isdigit() and len(stem) >= 6 and name_lower.endswith(".pdf"):
+                return True
+            return False
+
+        if any(es_archivo_radicado(f) for f in subfolder_path.iterdir() if f.is_file()):
             msg = "OMITIENDO: Ya existe un archivo de radicado previo en la carpeta."
             logs.append(msg)
             return ESTADO_OMITIDO_RADICADO, None, None, "\n".join(logs)
