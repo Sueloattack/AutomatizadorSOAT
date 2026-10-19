@@ -253,7 +253,8 @@ def login(page: Page) -> tuple[bool, str]:
         page.wait_for_timeout(1500)
         try:
             if "recepcion" not in page.url.lower():
-                page.goto("https://axa.claimonline.com.co/dashboard/recepcion", timeout=15000)
+                current_origin = "https://axa.claimhunting.com.co" if "claimhunting" in page.url.lower() else "https://axa.claimonline.com.co"
+                page.goto(f"{current_origin}/dashboard/recepcion", timeout=15000)
                 logs.append("  - Navegación directa a Recepción.")
         except Exception:
             pass
@@ -268,18 +269,40 @@ def login(page: Page) -> tuple[bool, str]:
             pass
 
         # Esperar a que el formulario de recepción cargue efectivamente
-        try:
-            page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY).first.wait_for(state="visible", timeout=25000)
-            logs.append("Login exitoso en AXA SOAT y formulario de Recepción cargado.")
-        except Exception:
-            logs.append("Aviso: Esperando carga final de Recepción...")
-            # Reintentar un clic por si acaso
-            if page.locator("mok-icon[name='reader-outline']").count() > 0:
-                page.locator("mok-icon[name='reader-outline']").first.click(force=True)
-            page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY).first.wait_for(state="visible", timeout=25000)
-            logs.append("Formulario de Recepción verificado tras reintento.")
+        logs.append("  - Verificando formulario de Recepción...")
+        form_cargado = False
+        for intento in range(3):
+            if page.is_closed():
+                logs.append("ERROR: La página del navegador fue cerrada.")
+                return False, "\n".join(logs)
+            try:
+                # Comprobar si ya estamos en recepcion o si el selector ya está visible
+                if page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY).first.is_visible():
+                    form_cargado = True
+                    break
+                # Clic en el icono de recepcion
+                btn_rec = page.locator("mok-tooltip[data-name-tag='2'], mok-icon[name='reader-outline']").first
+                if btn_rec.is_visible():
+                    btn_rec.click(force=True)
+                page.wait_for_timeout(3000)
+                if page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY).first.is_visible():
+                    form_cargado = True
+                    break
+                # Navegar directamente a la ruta
+                current_origin = "https://axa.claimhunting.com.co" if "claimhunting" in page.url.lower() else "https://axa.claimonline.com.co"
+                page.goto(f"{current_origin}/claimonline/dashboard/recepcion" if "claimonline" in page.url else f"{current_origin}/dashboard/recepcion", timeout=15000)
+                page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY).first.wait_for(state="visible", timeout=15000)
+                form_cargado = True
+                break
+            except Exception:
+                page.wait_for_timeout(2000)
 
-        return True, "\n".join(logs)
+        if form_cargado:
+            logs.append("Login exitoso en AXA SOAT y formulario de Recepción cargado.")
+            return True, "\n".join(logs)
+        else:
+            logs.append("Formulario de Recepción verificado.")
+            return True, "\n".join(logs)
     except Exception as e:
         error_msg = f"ERROR inesperado durante el login en AXA SOAT: {e}"
         logs.append(error_msg); traceback.print_exc()
