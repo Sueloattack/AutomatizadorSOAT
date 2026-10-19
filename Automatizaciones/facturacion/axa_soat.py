@@ -28,7 +28,7 @@ except ImportError as e:
     raise ImportError(f"ERROR CRITICO: Importaciones fallaron: {e}")
 
 # Reutilización de funciones comunes desde el módulo de glosas de AXA
-from ..glosas.axa_soat import login, asegurar_extension_pdf_minuscula, asegurar_formulario_limpio
+from ..glosas.axa_soat import login, navegar_a_inicio, asegurar_extension_pdf_minuscula, asegurar_formulario_limpio
 
 # --- Definición de Estados del Proceso ---
 ESTADO_EXITO = "EXITO"
