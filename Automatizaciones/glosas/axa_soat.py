@@ -98,6 +98,60 @@ def wait_for_otp_code(initial_ids: set, timeout: int = 120, allow_recent_fallbac
         time.sleep(3)
     return None
 
+def descargar_soporte_radicado_correo(radicado_number: str, folder_path: Path, timeout: int = 40) -> tuple[bool, str]:
+    """
+    Busca en el correo el mensaje de confirmación de AXA ClaimOnline para el radicado especificado
+    y descarga el PDF oficial adjunto (con el sello, fechas legales y firma).
+    """
+    logs = [f"  [CORREO] Buscando soporte oficial de radicación para el radicado {radicado_number}..."]
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        try:
+            imap = imaplib.IMAP4_SSL(EMAIL_IMAP_SERVER, timeout=15)
+            imap.login(EMAIL_USER_ADDRESS, EMAIL_APP_PASSWORD)
+            imap.select("INBOX", readonly=True)
+            
+            # Buscar correos de AXA que contengan el número de radicado en TEXT o SUBJECT
+            status, messages = imap.search(None, f'(FROM "{AXASOAT_EMAIL_SENDER}" TEXT "{radicado_number}")')
+            if status != "OK" or not messages[0]:
+                status, messages = imap.search(None, f'(FROM "{AXASOAT_EMAIL_SENDER}")')
+
+            if status == "OK" and messages[0]:
+                msg_ids = messages[0].split()
+                # Revisar los más recientes primero
+                for msg_id in reversed(msg_ids[-10:]):
+                    _, data = imap.fetch(msg_id, "(RFC822)")
+                    if not data or not data[0]:
+                        continue
+                    msg = email.message_from_bytes(data[0][1])
+                    
+                    # Revisar adjuntos
+                    for part in msg.walk():
+                        if part.get_content_maintype() == 'multipart':
+                            continue
+                        if part.get('Content-Disposition') is None:
+                            continue
+                        
+                        fn = part.get_filename() or ""
+                        if radicado_number in fn and fn.lower().endswith(".pdf"):
+                            payload = part.get_payload(decode=True)
+                            if payload:
+                                target_pdf = folder_path / fn
+                                with open(target_pdf, "wb") as f:
+                                    f.write(payload)
+                                imap.logout()
+                                logs.append(f"  -> ¡Soporte oficial del correo descargado con ÉXITO!: '{fn}'")
+                                return True, "\n".join(logs)
+            imap.logout()
+        except Exception as e:
+            logs.append(f"  -> Aviso en búsqueda de correo: {e}")
+        
+        time.sleep(4)
+        
+    logs.append(f"  -> Aviso: No llegó a tiempo el correo con adjunto para {radicado_number}. Se mantiene la captura del modal.")
+    return False, "\n".join(logs)
+
 def login(page: Page) -> tuple[bool, str]:
     """Realiza el login en AXA SOAT (ClaimOnline), gestiona 2FA/OTP por correo y navega a Recepción."""
     logs = ["Iniciando login en AXA SOAT (ClaimOnline)..."]
@@ -189,20 +243,17 @@ def login(page: Page) -> tuple[bool, str]:
         page.wait_for_timeout(2000)
         # Cerrar posible modal de notificación si intercepta
         try:
-            # Buscar botón X o de cierre
-            page.evaluate("""() => {
-                const btnX = document.querySelector('div[class*="z-[999]"] button, div[class*="z-[99999]"] button');
-                if (btnX) btnX.click();
-                document.querySelectorAll('mok-modal, div[class*="z-[999]"], div[class*="z-[99999]"], div[class*="backdrop-blur"]').forEach(el => el.remove());
-            }""")
+            btn_close = page.locator("div[class*='z-[999]'] button, div[class*='z-[99999]'] button, mok-modal button").first
+            if btn_close.is_visible(timeout=2000):
+                btn_close.click(force=True)
         except Exception:
             pass
 
         # 7. Navegar a Recepción haciendo clic en el icono correspondiente o vía URL
         page.wait_for_timeout(1500)
         try:
-            if "reception" not in page.url:
-                page.goto("https://axa.claimhunting.com.co/reception", timeout=15000)
+            if "recepcion" not in page.url.lower():
+                page.goto("https://axa.claimonline.com.co/dashboard/recepcion", timeout=15000)
                 logs.append("  - Navegación directa a Recepción.")
         except Exception:
             pass
@@ -252,25 +303,16 @@ def asegurar_formulario_limpio(page: Page) -> None:
             while btns.count() > 0 and btns.first.is_visible():
                 btns.first.click(force=True)
                 page.wait_for_timeout(500)
-            page.evaluate("""() => {
-                document.querySelectorAll('mok-modal, div.modal-content, div[class*="backdrop-blur"], div[class*="z-[999]"], div[class*="z-[99999]"]').forEach(el => el.remove());
-            }""")
         except Exception:
             pass
 
-        # 2. Navegar al módulo de Recepción para recargar el formulario en limpio
+        # 2. Recargar completamente el formulario de recepción para reiniciar inputs y archivos adjuntos
         try:
-            # Si estamos en dashboard o cualquier otra página, o para refrescar recepción:
-            btn_rec = page.locator("mok-icon[name='reader-outline'], mok-tooltip[data-name-tag='2']").first
-            if btn_rec.is_visible(timeout=2000):
-                btn_rec.click(force=True)
-                page.wait_for_timeout(1000)
+            if "recepcion" in page.url.lower():
+                page.reload()
             else:
-                page.goto("https://axa.claimhunting.com.co/reception", timeout=15000)
-                page.wait_for_timeout(1000)
-                btn_rec2 = page.locator("mok-icon[name='reader-outline'], mok-tooltip[data-name-tag='2']").first
-                if btn_rec2.is_visible(timeout=2000):
-                    btn_rec2.click(force=True)
+                page.goto("https://axa.claimhunting.com.co/dashboard/recepcion", timeout=15000)
+            page.wait_for_timeout(1500)
         except Exception:
             pass
 
@@ -278,10 +320,11 @@ def asegurar_formulario_limpio(page: Page) -> None:
         try:
             page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY).first.wait_for(state="visible", timeout=15000)
         except Exception:
-            # Reintentar clic en el icono del lector
             btn_rec_fallback = page.locator("mok-icon[name='reader-outline']").first
             if btn_rec_fallback.is_visible(timeout=2000):
                 btn_rec_fallback.click(force=True)
+            else:
+                page.goto("https://axa.claimhunting.com.co/dashboard/recepcion", timeout=15000)
             page.locator(AXASOAT_SELECTOR_FORMULARIO_VERIFY).first.wait_for(state="visible", timeout=20000)
 
         # 3. Limpiar inputs si quedaron restos
@@ -310,14 +353,24 @@ def llenar_formulario(page: Page, codigo_factura: str, subfolder_path: Path | No
     """Llena los campos del formulario de radicación de AXA ClaimOnline."""
     logs = ["Llenando formulario de radicación..."]
     try:
-        # 1. NIT Ramo SOAT Colpatria
+        # 1. NIT Ramo SOAT Colpatria (8600021846)
         nit_loc = page.locator("input.input-number-nit, input[placeholder*='NIT ramo SOAT Colpatria']").first
         nit_loc.wait_for(state="visible", timeout=20000)
         nit_loc.click()
         page.keyboard.press("Control+A")
         page.keyboard.press("Backspace")
-        page.keyboard.type(AXASOAT_NIT_RAMO_FORM, delay=20)
-        page.keyboard.press("Tab")
+        nit_loc.fill(str(AXASOAT_NIT_RAMO_FORM))
+        nit_loc.dispatch_event("input")
+        nit_loc.dispatch_event("change")
+        # Asegurar también con evaluate directo
+        page.evaluate("""(nitVal) => {
+            const el = document.querySelector('input.input-number-nit, input[placeholder*="NIT ramo SOAT Colpatria"]');
+            if (el) {
+                el.value = nitVal;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }""", str(AXASOAT_NIT_RAMO_FORM))
         logs.append(f"  - NIT Ramo SOAT: {AXASOAT_NIT_RAMO_FORM}")
 
         # 2. N° Factura
@@ -325,58 +378,51 @@ def llenar_formulario(page: Page, codigo_factura: str, subfolder_path: Path | No
         inv_loc.click()
         page.keyboard.press("Control+A")
         page.keyboard.press("Backspace")
-        page.keyboard.type(codigo_factura.upper(), delay=20)
-        page.keyboard.press("Tab")
+        inv_loc.fill(codigo_factura.upper())
+        inv_loc.dispatch_event("input")
+        inv_loc.dispatch_event("change")
+        # Disparar blur para que la web consulte la API de validación de factura
+        inv_loc.evaluate("el => el.blur()")
         logs.append(f"  - N° Factura: {codigo_factura.upper()}")
-        page.wait_for_timeout(1000)
 
-        # Si aparece el modal informativo de la factura ("La Factura ... fue recibida ... con la siguiente reclamación ...")
-        try:
+        # Esperar hasta 5 segundos a que la API responda o aparezca el modal de factura informativa
+        for _ in range(10):
+            page.wait_for_timeout(350)
             modal_loc = page.locator("div.modal-content").first
-            if modal_loc.is_visible(timeout=3000):
-                modal_txt = modal_loc.inner_text()
-                if "fue recibida" in modal_txt.lower() or "siguiente reclamaci" in modal_txt.lower():
-                    m_rec = re.search(r"reclamaci[oó]n\s*[:#-]?\s*(\d{7,10})", modal_txt, re.IGNORECASE) or \
-                            re.search(r"(\d{7,10})", modal_txt)
-                    rad_ya_recibido = m_rec.group(1) if m_rec else "RECIBIDA"
-                    logs.append(f"  - AVISO: Factura ya recibida previamente por AXA. Radicado: {rad_ya_recibido}")
-                    # Guardar comprobante de radicado previo si no existe
-                    try:
-                        nombre_pdf = f"{codigo_factura}-radicado-{rad_ya_recibido}.pdf"
-                        ruta_pdf = subfolder_path / nombre_pdf
-                        if not ruta_pdf.exists():
-                            temp_png = subfolder_path / f"temp_{codigo_factura}_{rad_ya_recibido}.png"
-                            page.screenshot(path=str(temp_png))
-                            img = Image.open(temp_png).convert("RGB")
-                            img.save(ruta_pdf, "PDF")
-                            try:
-                                temp_png.unlink()
-                            except Exception:
-                                pass
-                            logs.append(f"  -> Comprobante de radicación previa guardado como PDF en: '{ruta_pdf.name}'")
-                    except Exception:
-                        pass
+            modal_visible = False
+            modal_txt = ""
+            try:
+                if modal_loc.is_visible():
+                    modal_visible = True
+                    modal_txt = modal_loc.inner_text()
+            except Exception:
+                pass
 
-                    btn_modal_inv = page.locator("button:has-text('ACEPTAR'), button:has-text('Aceptar')")
-                    if btn_modal_inv.is_visible(timeout=2000):
+            if modal_visible and ("fue recibida" in modal_txt.lower() or "siguiente reclamaci" in modal_txt.lower()):
+                logs.append("  - AVISO: Mensaje de 'Factura fue recibida' detectado. Cerrando modal con ACEPTAR para continuar...")
+                try:
+                    btn_modal_inv = page.locator("div.modal-content button:has-text('ACEPTAR'), div.modal-content button:has-text('Aceptar'), button:has-text('ACEPTAR'), button:has-text('Aceptar')").last
+                    if btn_modal_inv.is_visible(timeout=3000):
                         btn_modal_inv.click()
-                        logs.append("  - Modal informativo de factura cerrado.")
-                        page.wait_for_timeout(500)
-                    page.evaluate("""() => {
-                        document.querySelectorAll('mok-modal, div.modal-content, div[class*="backdrop-blur"], div[class*="z-[800]"]').forEach(el => el.remove());
-                    }""")
-                    return True, f"ALREADY_RECEIVED:{rad_ya_recibido}\n" + "\n".join(logs)
+                        logs.append("  - Modal informativo cerrado con clic en ACEPTAR.")
+                except Exception:
+                    pass
+                page.wait_for_timeout(1000)
+                try:
+                    if page.locator("div.modal-content button").count() > 0:
+                        page.locator("div.modal-content button").last.click(force=True)
+                except Exception:
+                    pass
+                break
 
-                btn_modal_inv = page.locator("button:has-text('ACEPTAR'), button:has-text('Aceptar')")
-                if btn_modal_inv.is_visible(timeout=2000):
-                    btn_modal_inv.click()
-                    logs.append("  - Modal informativo de factura cerrado.")
-                    page.wait_for_timeout(500)
-                page.evaluate("""() => {
-                    document.querySelectorAll('mok-modal, div.modal-content, div[class*="backdrop-blur"], div[class*="z-[800]"]').forEach(el => el.remove());
-                }""")
+        # Asegurar que ningún modal residual quedó abierto
+        try:
+            btn_mod = page.locator("div.modal-content button:has-text('ACEPTAR'), div.modal-content button:has-text('Aceptar')").last
+            if btn_mod.is_visible(timeout=1000):
+                btn_mod.click()
         except Exception:
             pass
+        page.wait_for_timeout(500)
 
         # 3. Checkbox RIPS desmarcado por defecto si existe
         chk = page.locator("input[type='checkbox'][name*='check_service']")
@@ -384,23 +430,29 @@ def llenar_formulario(page: Page, codigo_factura: str, subfolder_path: Path | No
             chk.first.uncheck()
             logs.append("  - Checkbox RIPS desmarcado.")
 
-        # 4. Usuario que registra: CLINICA ASOTRAUMA (mayúsculas)
-        usr_nombre = AXASOAT_USUARIO_REGISTRA_FORM.upper()
+        # 4. Usuario que registra: clinica asotrauma
+        # 4. Usuario que registra: CLINICA ASOTRAUMA (mayúsculas, sin espacios extra)
+        usr_nombre = "CLINICA ASOTRAUMA"
         usr_loc = page.locator("input[name='userRegister']").first
+        usr_loc.wait_for(state="visible", timeout=10000)
         usr_loc.click()
         page.keyboard.press("Control+A")
         page.keyboard.press("Backspace")
-        page.keyboard.type(usr_nombre, delay=20)
-        page.keyboard.press("Tab")
+        usr_loc.press_sequentially(usr_nombre, delay=30)
+        usr_loc.dispatch_event("input")
+        usr_loc.dispatch_event("change")
+        usr_loc.evaluate("el => el.blur()")
+        page.wait_for_timeout(300)
         logs.append(f"  - Usuario que Registra: {usr_nombre}")
 
-        # 5. Seleccionar Tipo de Cuenta al final para desplegar sección Soportes
+        # 5. Seleccionar Tipo de Cuenta para desplegar sección Soportes
+        account_type_val = "REL" if context == "aceptadas" else "OBJ"
         if context == "aceptadas":
             tipo_cuenta_label = AXASOAT_TIPO_CUENTA_FORM_RESPUESTA_LIQUIDACION
-            logs.append(f"  - Contexto 'aceptadas' detectado. Tipo de cuenta: '{tipo_cuenta_label}'")
+            logs.append(f"  - Contexto 'aceptadas' detectado. Tipo de cuenta: '{tipo_cuenta_label}' ({account_type_val})")
         else:
             tipo_cuenta_label = AXASOAT_TIPO_CUENTA_FORM_RESPUESTA_OBJECION
-            logs.append(f"  - Usando Tipo de cuenta por defecto: '{tipo_cuenta_label}'")
+            logs.append(f"  - Usando Tipo de cuenta por defecto: '{tipo_cuenta_label}' ({account_type_val})")
 
         # Clic en el select/dropdown de tipo de cuenta
         tipo_cta_input = page.locator("input[data-analytics='input-select-accountType'], input[placeholder='Seleccione una opción']").first
@@ -417,67 +469,78 @@ def llenar_formulario(page: Page, codigo_factura: str, subfolder_path: Path | No
             page.locator(f"div:has-text('{tipo_cuenta_label}'), span:has-text('{tipo_cuenta_label}'), li:has-text('{tipo_cuenta_label}')").last.click()
             logs.append(f"  - Tipo de cuenta seleccionado vía texto: '{tipo_cuenta_label}'")
 
-        page.wait_for_timeout(1000)
+        page.wait_for_timeout(500)
 
-        # Sincronización robusta: Inyectar directamente en el estado de React (Fiber) del componente de Recepción
-        page.evaluate("""(data) => {
-            const root = document.querySelector('#root') || document.body;
-            const reactKey = Object.keys(root).find(k => k.startsWith('__reactContainer') || k.startsWith('__reactFiber'));
-            let fiber = root[reactKey];
-            let receptionFiber = null;
-
-            function findReception(node) {
-                if (!node || receptionFiber) return;
-                let m = node.memoizedState;
-                while (m) {
-                    if (m.memoizedState && typeof m.memoizedState === 'object' && 'accountType' in m.memoizedState && 'nit' in m.memoizedState) {
-                        receptionFiber = node;
-                        return;
-                    }
-                    m = m.next;
-                }
-                findReception(node.child);
-                findReception(node.sibling);
-            }
-            findReception(fiber);
-
-            if (receptionFiber) {
-                let cur = receptionFiber.memoizedState;
-                while (cur) {
-                    if (cur.memoizedState && typeof cur.memoizedState === 'object') {
-                        // 1. Hook de datos del formulario (kt)
-                        if ('nit' in cur.memoizedState && typeof cur.memoizedState.nit === 'string') {
-                            cur.queue.dispatch(prev => ({
-                                ...prev,
-                                nit: String(data.nit || ''),
-                                invoiceNumber: String(data.invoice || ''),
-                                userRegister: String(data.user || ''),
-                                accountType: prev && prev.accountType ? String(prev.accountType) : String(data.accountType || '')
-                            }));
+        # Sincronización exacta con los Hooks del componente ReceptionPage:
+        # Hook 6:  [rt, at] = useState({}) (Errores de formulario) -> at({})
+        # Hook 8:  [yt, gt] = useState(!1) (hasRips) -> gt(false)
+        # Hook 11: [Ct, vt] = useState({}) (Errores RIPS) -> vt({})
+        # Hook 16: [Vt, Wt] = useState(0) (accountType Value) -> Wt(account_type_val)
+        # Hook 17: [kt, Mt] = useState(formData) -> Mt(...)
+        try:
+            page.evaluate("""(data) => {
+                const root = document.querySelector('#root') || document.body;
+                const reactKey = Object.keys(root).find(k => k.startsWith('__reactContainer') || k.startsWith('__reactFiber'));
+                let fiber = root[reactKey];
+                let receptionFiber = null;
+                function findReception(node) {
+                    if (!node || receptionFiber) return;
+                    let m = node.memoizedState;
+                    while (m) {
+                        if (m.memoizedState && typeof m.memoizedState === 'object' && 'accountType' in m.memoizedState && 'nit' in m.memoizedState) {
+                            receptionFiber = node;
+                            return;
                         }
-                        // 2. Hook de errores del formulario (rt)
-                        if (cur.memoizedState && (cur.memoizedState.nit || cur.memoizedState.invoiceNumber || cur.memoizedState.userRegister)) {
-                            let nextErr = { ...cur.memoizedState };
-                            delete nextErr.nit;
-                            delete nextErr.invoiceNumber;
-                            delete nextErr.userRegister;
-                            cur.queue.dispatch(nextErr);
-                        }
+                        m = m.next;
                     }
-                    cur = cur.next;
+                    findReception(node.child);
+                    findReception(node.sibling);
                 }
-            }
+                findReception(fiber);
+                if (receptionFiber) {
+                    let cur = receptionFiber.memoizedState;
+                    let idx = 0;
+                    let hook6 = null;
+                    let hook8 = null;
+                    let hook11 = null;
+                    let hook16 = null;
+                    let hook17 = null;
+                    while (cur) {
+                        if (idx === 6) hook6 = cur;
+                        if (idx === 8) hook8 = cur;
+                        if (idx === 11) hook11 = cur;
+                        if (idx === 16) hook16 = cur;
+                        if (idx === 17) hook17 = cur;
+                        cur = cur.next;
+                        idx++;
+                    }
+                    if (hook6 && hook6.queue) {
+                        hook6.queue.dispatch({});
+                    }
+                    if (hook8 && hook8.queue) {
+                        hook8.queue.dispatch(false);
+                    }
+                    if (hook11 && hook11.queue) {
+                        hook11.queue.dispatch({});
+                    }
+                    if (hook16 && hook16.queue) {
+                        hook16.queue.dispatch(data.accountTypeVal);
+                    }
+                    if (hook17 && hook17.queue) {
+                        hook17.queue.dispatch(prev => ({
+                            ...prev,
+                            nit: "8600021846",
+                            invoiceNumber: String(data.invoice || ''),
+                            userRegister: String(data.user || ''),
+                            accountType: String(data.accountTypeVal || '')
+                        }));
+                    }
+                }
+            }""", {"invoice": codigo_factura.upper(), "user": usr_nombre, "accountTypeVal": account_type_val})
+            page.wait_for_timeout(300)
+        except Exception:
+            pass
 
-            // Actualizar visualmente los inputs del DOM
-            const nitInp = document.querySelector('input.input-number-nit');
-            if (nitInp) nitInp.value = data.nit;
-            const invInp = document.querySelector('input[name="invoiceNumber"]');
-            if (invInp) invInp.value = data.invoice;
-            const usrInp = document.querySelector('input[name="userRegister"]');
-            if (usrInp) usrInp.value = data.user;
-        }""", {"nit": AXASOAT_NIT_RAMO_FORM, "invoice": codigo_factura.upper(), "user": usr_nombre, "accountType": tipo_cuenta_label})
-
-        page.wait_for_timeout(1000)
         logs.append("Formulario llenado con éxito y sección de Soportes habilitada.")
         return True, "\n".join(logs)
 
@@ -522,53 +585,91 @@ def subir_archivo_respuesta(page: Page, pdf_path: Path) -> tuple[bool, str]:
         input_file.set_input_files(pdf_path)
         page.wait_for_timeout(2000)
 
-        # Trigger React upload handler y asegurar que Nt se establezca en true (Dt(true))
+        # Disparar en el elemento Web Component y en el input interno
         page.evaluate("""() => {
-            const inp = document.querySelector("input[type='file'][name='others']");
+            const inp = document.querySelector("input[type='file'][name='others']") || document.querySelector("input[type='file']");
             if (inp && inp.files && inp.files.length > 0) {
+                const fileObj = inp.files[0];
+                const filePayload = {
+                    event: [fileObj],
+                    previewUrl: null,
+                    filesPreview: [fileObj.name],
+                    countFiles: 1
+                };
+
+                // 1. Invocar en mok-input-multiplefiles si existe el método processFiles
+                const mokMultiple = inp.closest('mok-input-multiplefiles');
+                if (mokMultiple) {
+                    if (typeof mokMultiple.processFiles === 'function') {
+                        try { mokMultiple.processFiles([fileObj]); } catch(e){}
+                    }
+                    if (mokMultiple.eventChange && typeof mokMultiple.eventChange.emit === 'function') {
+                        try { mokMultiple.eventChange.emit(filePayload); } catch(e){}
+                    }
+                }
+
+                // 2. Invocar en mok-form-constructor handleCahngeInput
+                const mokForm = inp.closest('mok-form-constructor');
+                if (mokForm) {
+                    if (typeof mokForm.handleCahngeInput === 'function') {
+                        try {
+                            mokForm.handleCahngeInput({ detail: filePayload }, 'others', 'multipleFiles');
+                        } catch(e){}
+                    }
+                    if (typeof mokForm.eventInput === 'function') {
+                        try {
+                            mokForm.eventInput({ detail: filePayload, name: 'others', type: 'multipleFiles' });
+                        } catch(e){}
+                    }
+                }
+
+                // 3. Dispatch standard events
                 inp.dispatchEvent(new Event('change', { bubbles: true }));
                 inp.dispatchEvent(new Event('input', { bubbles: true }));
-            }
 
-            // Forzar en el Fiber de Recepción que Nt (hasFiles / others uploaded) sea true
-            const root = document.querySelector('#root') || document.body;
-            const reactKey = Object.keys(root).find(k => k.startsWith('__reactContainer') || k.startsWith('__reactFiber'));
-            let fiber = root[reactKey];
-            let receptionFiber = null;
+                // 4. Sincronización directa en el Fiber de Recepción:
+                // Hook 6: at({}) (errores limpios)
+                // Hook 15: Ft(true) (hasFiles = true)
+                // Hook 17: Mt(prev => ({ ...prev, others: filePayload }))
+                const root = document.querySelector('#root') || document.body;
+                const reactKey = Object.keys(root).find(k => k.startsWith('__reactContainer') || k.startsWith('__reactFiber'));
+                let fiber = root[reactKey];
+                let receptionFiber = null;
 
-            function findReception(node) {
-                if (!node || receptionFiber) return;
-                let m = node.memoizedState;
-                while (m) {
-                    if (m.memoizedState && typeof m.memoizedState === 'object' && 'accountType' in m.memoizedState && 'nit' in m.memoizedState) {
-                        receptionFiber = node;
-                        return;
+                function findReception(node) {
+                    if (!node || receptionFiber) return;
+                    let m = node.memoizedState;
+                    while (m) {
+                        if (m.memoizedState && typeof m.memoizedState === 'object' && 'accountType' in m.memoizedState && 'nit' in m.memoizedState) {
+                            receptionFiber = node;
+                            return;
+                        }
+                        m = m.next;
                     }
-                    m = m.next;
+                    findReception(node.child);
+                    findReception(node.sibling);
                 }
-                findReception(node.child);
-                findReception(node.sibling);
-            }
-            findReception(fiber);
+                findReception(fiber);
 
-            if (receptionFiber) {
-                let cur = receptionFiber.memoizedState;
-                let idx = 0;
-                while (cur) {
-                    // Hook index 15 es [Nt, Dt] = useState(false)
-                    if (idx === 15 && typeof cur.memoizedState === 'boolean') {
-                        cur.queue.dispatch(true);
+                if (receptionFiber) {
+                    let cur = receptionFiber.memoizedState;
+                    let idx = 0;
+                    while (cur) {
+                        if (idx === 6 && cur.queue) {
+                            cur.queue.dispatch({});
+                        }
+                        if (idx === 15 && cur.queue) {
+                            cur.queue.dispatch(true);
+                        }
+                        if (idx === 17 && cur.queue) {
+                            cur.queue.dispatch(prev => ({
+                                ...prev,
+                                others: filePayload
+                            }));
+                        }
+                        cur = cur.next;
+                        idx++;
                     }
-                    // Hook index 6 es [rt, at] = useState({}) errores
-                    if (idx === 6 && cur.memoizedState && typeof cur.memoizedState === 'object') {
-                        let nextErr = { ...cur.memoizedState };
-                        delete nextErr.others;
-                        delete nextErr.pdf;
-                        delete nextErr.nit;
-                        cur.queue.dispatch(nextErr);
-                    }
-                    cur = cur.next;
-                    idx++;
                 }
             }
         }""")
@@ -619,14 +720,6 @@ def procesar_carpeta(page: Page, subfolder_path: Path, subfolder_name: str, cont
         if not form_ok:
             asegurar_formulario_limpio(page)
             return ESTADO_FALLO, None, codigo_factura, "\n".join(logs)
-
-        # Si la factura ya había sido recibida previamente por AXA
-        if "ALREADY_RECEIVED:" in form_log:
-            m_rad = re.search(r"ALREADY_RECEIVED:(\d+)", form_log)
-            rad_prev = m_rad.group(1) if m_rad else "RECIBIDA"
-            asegurar_formulario_limpio(page)
-            logs.append(f"--- Factura '{codigo_factura}' ya recibida previamente con radicado: {rad_prev} ---")
-            return ESTADO_EXITO, rad_prev, codigo_factura, "\n".join(logs)
 
         upload_ok, upload_log = subir_archivo_respuesta(page, path_pdf_final)
         logs.append(upload_log)
@@ -682,6 +775,73 @@ def enviar_y_finalizar_radicado(page: Page, subfolder_path: Path, codigo_factura
         except Exception:
             pass
 
+        # Sincronizar y limpiar estado de validación inmediatamente antes de dar clic en Guardar
+        try:
+            page.evaluate("""(data) => {
+                const root = document.querySelector('#root') || document.body;
+                const reactKey = Object.keys(root).find(k => k.startsWith('__reactContainer') || k.startsWith('__reactFiber'));
+                let fiber = root[reactKey];
+                let receptionFiber = null;
+                function findReception(node) {
+                    if (!node || receptionFiber) return;
+                    let m = node.memoizedState;
+                    while (m) {
+                        if (m.memoizedState && typeof m.memoizedState === 'object' && 'accountType' in m.memoizedState && 'nit' in m.memoizedState) {
+                            receptionFiber = node;
+                            return;
+                        }
+                        m = m.next;
+                    }
+                    findReception(node.child);
+                    findReception(node.sibling);
+                }
+                findReception(fiber);
+                if (receptionFiber) {
+                    let cur = receptionFiber.memoizedState;
+                    let idx = 0;
+                    while (cur) {
+                        // Hook 6: [rt, at] (form errors) -> clear completely
+                        if (idx === 6 && cur.queue) {
+                            cur.queue.dispatch({});
+                        }
+                        // Hook 8: [yt, gt] (hasRips) -> false
+                        if (idx === 8 && cur.queue) {
+                            cur.queue.dispatch(false);
+                        }
+                        // Hook 11: [Ct, vt] (rips errors) -> clear completely
+                        if (idx === 11 && cur.queue) {
+                            cur.queue.dispatch({});
+                        }
+                        // Hook 15: [Nt, Ft] (hasFiles) -> true
+                        if (idx === 15 && cur.queue) {
+                            cur.queue.dispatch(true);
+                        }
+                        // Hook 16: [Vt, Wt] (accountType ID/Value)
+                        if (idx === 16 && cur.queue) {
+                            cur.queue.dispatch("OBJ");
+                        }
+                        // Hook 17: [kt, Mt] (formData)
+                        if (idx === 17 && cur.queue) {
+                            cur.queue.dispatch(prev => {
+                                const base = prev || {};
+                                return {
+                                    ...base,
+                                    nit: "8600021846",
+                                    invoiceNumber: String(data.invoice || ''),
+                                    userRegister: "CLINICA ASOTRAUMA",
+                                    accountType: base.accountType || "OBJ"
+                                };
+                            });
+                        }
+                        cur = cur.next;
+                        idx++;
+                    }
+                }
+            }""", {"invoice": codigo_factura.upper()})
+            page.wait_for_timeout(300)
+        except Exception:
+            pass
+
         # Clic en 'Guardar información' (una sola vez)
         boton_guardar = page.locator("button:has-text('Guardar información')").last
         boton_guardar.wait_for(state="visible", timeout=10000)
@@ -713,35 +873,31 @@ def enviar_y_finalizar_radicado(page: Page, subfolder_path: Path, codigo_factura
         except Exception:
             pass
 
-        # Verificar si fue un modal de error
+        # Verificar si fue un modal de error o de advertencia no exitoso
         if "Verifique los campos requeridos" in modal_text or "error al enviar la información" in modal_text.lower() or "typeerror" in modal_text.lower():
             logs.append(f"  -> ERROR en el envío/validación del formulario: {modal_text.strip()}")
             log_shot = guardar_screenshot_de_error(page, f"error_envio_{codigo_factura}")
             logs.append(log_shot)
             try:
-                page.evaluate("""() => {
-                    const btns = Array.from(document.querySelectorAll('div.modal-content button, button')).filter(b => b.textContent && (b.textContent.includes('Aceptar') || b.textContent.includes('ACEPTAR')));
-                    if (btns.length > 0) btns[btns.length - 1].click();
-                    document.querySelectorAll('mok-modal, div.modal-content, div[class*="backdrop-blur"], div[class*="z-[800]"], div[class*="z-[999]"]').forEach(el => el.remove());
-                }""")
+                btn_err = page.locator("div.modal-content button:has-text('Aceptar'), div.modal-content button:has-text('ACEPTAR'), button:has-text('Aceptar')").last
+                if btn_err.is_visible(timeout=2000):
+                    btn_err.click()
             except Exception:
                 pass
             return None, "\n".join(logs)
 
+        # Buscar estrictamente el radicado de reclamación creada con éxito (con checkmark azul)
         match = re.search(r"Reclamaci[oó]n\s+creada\s+con\s+[eé]xito\s+(\d+)", modal_text, re.IGNORECASE) or \
-                re.search(r"creada\s+con\s+[eé]xito\s*[:#-]?\s*(\d+)", modal_text, re.IGNORECASE) or \
-                re.search(r"siguiente\s+reclamaci[oó]n\s+(\d+)", modal_text, re.IGNORECASE) or \
-                re.search(r"reclamaci[oó]n\s*[:#-]?\s*(\d{7,10})", modal_text, re.IGNORECASE)
+                re.search(r"creada\s+con\s+[eé]xito\s*[:#-]?\s*(\d+)", modal_text, re.IGNORECASE)
 
         if match:
             radicado_extraido = match.group(1)
         elif response_radicado:
             radicado_extraido = response_radicado[-1]
         else:
-            # Fallback en el DOM completo
+            # Fallback en el DOM completo únicamente para 'creada con éxito'
             txt_body = page.inner_text("body")
-            m_body = re.search(r"Reclamaci[oó]n\s+creada\s+con\s+[eé]xito\s+(\d+)", txt_body, re.IGNORECASE) or \
-                     re.search(r"siguiente\s+reclamaci[oó]n\s+(\d+)", txt_body, re.IGNORECASE)
+            m_body = re.search(r"Reclamaci[oó]n\s+creada\s+con\s+[eé]xito\s+(\d+)", txt_body, re.IGNORECASE)
             if m_body:
                 radicado_extraido = m_body.group(1)
 
@@ -753,7 +909,7 @@ def enviar_y_finalizar_radicado(page: Page, subfolder_path: Path, codigo_factura
                 temp_png = subfolder_path / f"temp_{codigo_factura}_{radicado_extraido}.png"
                 page.screenshot(path=str(temp_png))
                 
-                # Convertir a PDF
+                # Convertir a PDF (captura de pantalla del modal con el checkmark)
                 img = Image.open(temp_png).convert("RGB")
                 img.save(ruta_pdf, "PDF")
                 try:
@@ -763,6 +919,10 @@ def enviar_y_finalizar_radicado(page: Page, subfolder_path: Path, codigo_factura
                 logs.append(f"  -> Comprobante de radicación guardado como PDF en: '{ruta_pdf.name}'")
             except Exception as e_shot:
                 logs.append(f"  -> Aviso al guardar PDF de radicación: {e_shot}")
+
+            # Descargar también el soporte oficial con sello que envía AXA al correo
+            correo_ok, correo_log = descargar_soporte_radicado_correo(radicado_extraido, subfolder_path, timeout=30)
+            logs.append(correo_log)
         else:
             logs.append(f"  -> ERROR: No se generó número de radicado. Mensaje en pantalla: {modal_text.strip() or 'Campos incompletos o inválidos'}")
             log_shot = guardar_screenshot_de_error(page, f"error_radicacion_{codigo_factura}")
