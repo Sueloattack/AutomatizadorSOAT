@@ -409,7 +409,6 @@ def llenar_formulario(page: Page, codigo_factura: str, subfolder_path: Path | No
                     pass
                 page.wait_for_timeout(1000)
                 try:
-                    # Cerrar también cualquier botón dentro de mok-modal
                     for b in page.locator("mok-modal button, div.modal-content button").all():
                         if b.is_visible():
                             b.click(force=True)
@@ -417,7 +416,7 @@ def llenar_formulario(page: Page, codigo_factura: str, subfolder_path: Path | No
                     pass
                 break
 
-        # Asegurar que ningún modal o backdrop residual quedó abierto
+        # Asegurar que ningún modal, diálogo o backdrop residual quede en el DOM bloqueando la vista
         try:
             page.evaluate("""() => {
                 const btns = document.querySelectorAll('mok-modal button, div.modal-content button, button.mx-auto');
@@ -426,7 +425,15 @@ def llenar_formulario(page: Page, codigo_factura: str, subfolder_path: Path | No
                         b.click();
                     }
                 });
-                // Cerrar overlay en caso de haber quedado abierto
+                // Si aún existen modales informativos o backdrops, cerrarlos o removerlos para permitir interacción
+                const modals = document.querySelectorAll('mok-modal, div.modal-content');
+                modals.forEach(m => {
+                    const txt = (m.innerText || '').toLowerCase();
+                    if (txt.includes('recibida') || txt.includes('reclamaci') || txt.includes('importante')) {
+                        const closeBtn = m.querySelector('button');
+                        if (closeBtn) closeBtn.click();
+                    }
+                });
                 const overlays = document.querySelectorAll('div[class*="backdrop-blur"], div[class*="bg-[#00000050]"]');
                 overlays.forEach(o => o.click());
             }""")
@@ -437,15 +444,33 @@ def llenar_formulario(page: Page, codigo_factura: str, subfolder_path: Path | No
         # 3. Checkbox RIPS desmarcado por defecto si existe
         chk = page.locator("input[type='checkbox'][name*='check_service']")
         if chk.count() > 0 and chk.first.is_checked():
-            chk.first.uncheck()
-            logs.append("  - Checkbox RIPS desmarcado.")
+            try:
+                chk.first.uncheck(force=True)
+                logs.append("  - Checkbox RIPS desmarcado.")
+            except Exception:
+                pass
 
-        # 4. Usuario que registra: clinica asotrauma
         # 4. Usuario que registra: CLINICA ASOTRAUMA (mayúsculas, sin espacios extra)
         usr_nombre = "CLINICA ASOTRAUMA"
         usr_loc = page.locator("input[name='userRegister']").first
         usr_loc.wait_for(state="visible", timeout=10000)
-        usr_loc.click()
+        
+        # Si un overlay aún estuviera interceptando clics normales, cerrar de nuevo y forzar clic
+        try:
+            usr_loc.click(timeout=3000)
+        except Exception:
+            try:
+                page.evaluate("""() => {
+                    document.querySelectorAll('mok-modal, div.modal-content').forEach(m => {
+                        const txt = (m.innerText || '').toLowerCase();
+                        if (!txt.includes('creada con éxito')) m.remove();
+                    });
+                    document.querySelectorAll('div[class*="backdrop-blur"], div[class*="bg-[#00000050]"]').forEach(o => o.remove());
+                }""")
+            except Exception:
+                pass
+            usr_loc.click(force=True)
+
         page.keyboard.press("Control+A")
         page.keyboard.press("Backspace")
         usr_loc.press_sequentially(usr_nombre, delay=30)
