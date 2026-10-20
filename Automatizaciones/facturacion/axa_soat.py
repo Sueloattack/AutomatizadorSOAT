@@ -52,10 +52,51 @@ def llenar_formulario(page: Page, codigo_factura: str, cuv: str) -> tuple[bool, 
         page.keyboard.press("Control+A")
         page.keyboard.press("Backspace")
         for digit in str(AXASOAT_NIT_RAMO_FORM):
-            page.keyboard.type(digit, delay=100)
+            page.keyboard.type(digit, delay=120)
         nit_loc.dispatch_event("input")
         nit_loc.dispatch_event("change")
         nit_loc.evaluate("el => el.blur()")
+
+        # Asegurar estado limpio de NIT en React Fiber directamente
+        try:
+            page.evaluate("""(nitVal) => {
+                const root = document.querySelector('#root') || document.body;
+                const reactKey = Object.keys(root).find(k => k.startsWith('__reactContainer') || k.startsWith('__reactFiber'));
+                let fiber = root[reactKey];
+                let receptionFiber = null;
+                function findReception(node) {
+                    if (!node || receptionFiber) return;
+                    let m = node.memoizedState;
+                    while (m) {
+                        if (m.memoizedState && typeof m.memoizedState === 'object' && 'accountType' in m.memoizedState && 'nit' in m.memoizedState) {
+                            receptionFiber = node;
+                            return;
+                        }
+                        m = m.next;
+                    }
+                    findReception(node.child);
+                    findReception(node.sibling);
+                }
+                findReception(fiber);
+                if (receptionFiber) {
+                    let cur = receptionFiber.memoizedState;
+                    let idx = 0;
+                    while (cur) {
+                        if (idx === 6 && cur.queue) cur.queue.dispatch({});
+                        if (idx === 17 && cur.queue) {
+                            cur.queue.dispatch(prev => ({
+                                ...(prev || {}),
+                                nit: String(nitVal)
+                            }));
+                        }
+                        cur = cur.next;
+                        idx++;
+                    }
+                }
+            }""", str(AXASOAT_NIT_RAMO_FORM))
+        except Exception:
+            pass
+
         logs.append(f"  - NIT Ramo SOAT: {AXASOAT_NIT_RAMO_FORM}")
 
         # 2. N° Factura
