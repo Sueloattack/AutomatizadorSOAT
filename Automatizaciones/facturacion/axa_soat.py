@@ -51,7 +51,8 @@ def llenar_formulario(page: Page, codigo_factura: str, cuv: str) -> tuple[bool, 
         nit_loc.click()
         page.keyboard.press("Control+A")
         page.keyboard.press("Backspace")
-        nit_loc.press_sequentially(str(AXASOAT_NIT_RAMO_FORM), delay=30)
+        for digit in str(AXASOAT_NIT_RAMO_FORM):
+            page.keyboard.type(digit, delay=100)
         nit_loc.dispatch_event("input")
         nit_loc.dispatch_event("change")
         nit_loc.evaluate("el => el.blur()")
