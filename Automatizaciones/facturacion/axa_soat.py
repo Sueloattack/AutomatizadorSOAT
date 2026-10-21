@@ -28,7 +28,12 @@ except ImportError as e:
     raise ImportError(f"ERROR CRITICO: Importaciones fallaron: {e}")
 
 # Reutilización de funciones comunes desde el módulo de glosas de AXA
-from ..glosas.axa_soat import login, navegar_a_inicio, asegurar_extension_pdf_minuscula, asegurar_formulario_limpio
+from ..glosas.axa_soat import login as login_glosas, navegar_a_inicio, asegurar_extension_pdf_minuscula, asegurar_formulario_limpio
+
+def login(page: Page) -> tuple[bool, str]:
+    """Realiza el login en AXA SOAT utilizando exclusivamente el correo de Facturación."""
+    return login_glosas(page, correo_login=AXASOAT_CORREO_LOGIN_FACTURACION)
+
 
 # --- Definición de Estados del Proceso ---
 ESTADO_EXITO = "EXITO"

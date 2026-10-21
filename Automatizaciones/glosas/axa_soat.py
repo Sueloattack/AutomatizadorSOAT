@@ -152,7 +152,7 @@ def descargar_soporte_radicado_correo(radicado_number: str, folder_path: Path, t
     logs.append(f"  -> Aviso: No llegó a tiempo el correo con adjunto para {radicado_number}. Se mantiene la captura del modal.")
     return False, "\n".join(logs)
 
-def login(page: Page) -> tuple[bool, str]:
+def login(page: Page, correo_login: str = AXASOAT_CORREO_LOGIN) -> tuple[bool, str]:
     """Realiza el login en AXA SOAT (ClaimOnline), gestiona 2FA/OTP por correo y navega a Recepción."""
     logs = ["Iniciando login en AXA SOAT (ClaimOnline)..."]
     try:
@@ -176,7 +176,7 @@ def login(page: Page) -> tuple[bool, str]:
 
         # 2. Llenar los datos de acceso
         # Rellenar visualmente con Playwright
-        page.locator("input[placeholder='Ingresar correo']").fill(AXASOAT_CORREO_LOGIN)
+        page.locator("input[placeholder='Ingresar correo']").fill(correo_login)
         page.locator("select").select_option(value=AXASOAT_TIPO_RECLAMANTE_VAL)
         page.locator("input[placeholder*='documento']").fill(AXASOAT_DOCUMENTO_LOGIN)
 
@@ -212,7 +212,7 @@ def login(page: Page) -> tuple[bool, str]:
                     setDataLogin({{
                         tokenCaptcha: '',
                         ip: null,
-                        email: '{AXASOAT_CORREO_LOGIN}',
+                        email: '{correo_login}',
                         claimantTypeId: '{AXASOAT_TIPO_RECLAMANTE_VAL}',
                         dni: '{AXASOAT_DOCUMENTO_LOGIN}'
                     }});
@@ -223,7 +223,7 @@ def login(page: Page) -> tuple[bool, str]:
             }}
         }}""")
 
-        logs.append(f"  - Correo: '{AXASOAT_CORREO_LOGIN}'")
+        logs.append(f"  - Correo: '{correo_login}'")
         logs.append(f"  - Tipo Reclamante: '{AXASOAT_TIPO_RECLAMANTE_LOGIN}'")
         logs.append(f"  - Documento reclamante: '{AXASOAT_DOCUMENTO_LOGIN}'")
 
