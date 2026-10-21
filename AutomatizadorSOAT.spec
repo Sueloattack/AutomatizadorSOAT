@@ -1,11 +1,27 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+from pathlib import Path
 
+# Localizar los navegadores de Playwright instalados en la máquina
+local_app_data = os.environ.get('LOCALAPPDATA', '')
+playwright_browsers_src = os.path.join(local_app_data, 'ms-playwright', 'chromium-1181')
+
+datas = [
+    ('InterfazUsuario/dark_theme.qss', 'InterfazUsuario'),
+    ('InterfazUsuario/light_theme.qss', 'InterfazUsuario'),
+    ('Recursos/Icons/pingu.ico', 'Recursos/Icons'),
+    ('Recursos/Icons/pingu.png', 'Recursos/Icons'),
+]
+
+# Si existe la carpeta del navegador chromium-1181, incluirla empaquetada dentro de la estructura de Playwright
+if os.path.exists(playwright_browsers_src):
+    datas.append((playwright_browsers_src, 'playwright/driver/package/.local-browsers/chromium-1181'))
 
 a = Analysis(
     ['main.py'],
     pathex=['Automatizaciones'],
     binaries=[],
-    datas=[('InterfazUsuario/dark_theme.qss', 'InterfazUsuario'), ('InterfazUsuario/light_theme.qss', 'InterfazUsuario'), ('Recursos/Icons/pingu.ico', 'Recursos/Icons'), ('Recursos/Icons/pingu.png', 'Recursos/Icons')],
+    datas=datas,
     hiddenimports=[
         'PySide6', 
         'shiboken6', 
