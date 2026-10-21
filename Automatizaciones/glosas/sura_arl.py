@@ -304,74 +304,30 @@ def comprimir_pdf(file_path: Path, logs: list) -> bool:
 
 def limpiar_pantalla_y_modales(sura_page: Page, logs: list):
     """Cierra todos los modales, SweetAlerts y overlays que puedan haber quedado abiertos."""
-    logs.append("  - Limpiando pantalla y cerrando posibles modales...")
-    
-    # 1. Cerrar SweetAlerts
     try:
-        confirm_btn = sura_page.locator("button.swal2-confirm")
-        for _ in range(5):
-            if not confirm_btn.is_visible():
-                break
-            logs.append("    - Cerrando alerta SweetAlert...")
-            try:
-                confirm_btn.first.click(timeout=2000)
-            except Exception:
-                sura_page.evaluate("() => { const b = document.querySelector('button.swal2-confirm'); if (b) b.click(); }")
-            time.sleep(0.5)
-    except Exception:
-        pass
-        
-    # 2. Cerrar modales bootstrap (ngb-modal-window)
-    try:
-        while True:
-            modal = sura_page.locator("ngb-modal-window").last
-            if not modal.is_visible():
-                break
-                
-            logs.append("    - Detectado modal abierto, intentando cerrar...")
-            
-            # Intentar clickear el botón 'Cerrar' dentro de ese modal específico
-            cerrar_btn = modal.locator("button:has-text('Cerrar')")
-            if cerrar_btn.is_visible():
-                cerrar_btn.click(timeout=3000)
-                time.sleep(1)
-                continue
-                
-            # Si no hay botón 'Cerrar', intentar con el botón de la equis (close icon)
-            x_btn = modal.locator("button.close, button[aria-label='Close']")
-            if x_btn.is_visible():
-                x_btn.click(timeout=3000)
-                time.sleep(1)
-                continue
-                
-            # Si nada de eso funciona, presionar Escape
-            sura_page.keyboard.press("Escape")
-            time.sleep(1)
-            
-            # Evitar bucle infinito si no se cierra, forzando eliminación vía DOM
-            if modal.is_visible():
-                logs.append("    - No se pudo cerrar el modal mediante clicks o Escape. Forzando cierre vía JS.")
-                sura_page.evaluate("""() => {
-                    document.querySelectorAll('ngb-modal-window').forEach(el => el.remove());
-                    document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
-                    document.querySelectorAll('.swal2-container').forEach(el => el.remove());
-                    document.querySelectorAll('.overlay').forEach(el => el.remove());
-                    document.body.classList.remove('modal-open');
-                    document.body.classList.remove('swal2-shown');
-                }""")
-                break
+        sura_page.evaluate("""() => {
+            // 1. Cerrar sweetalert si existe botón
+            const swalBtn = document.querySelector('button.swal2-confirm, button.swal2-close');
+            if (swalBtn) {
+                try { swalBtn.click(); } catch(e) {}
+            }
+
+            // 2. Intentar cerrar modales ngb normalmente
+            const closeBtns = document.querySelectorAll('ngb-modal-window button');
+            closeBtns.forEach(b => {
+                const txt = (b.textContent || '').toLowerCase();
+                if (txt.includes('cerrar') || b.classList.contains('close') || b.getAttribute('aria-label') === 'Close') {
+                    try { b.click(); } catch(e) {}
+                }
+            });
+
+            // 3. Forzar remoción inmediata de cualquier modal, backdrop u overlay que persista
+            document.querySelectorAll('ngb-modal-window, .modal-backdrop, .swal2-container, .overlay, .modal').forEach(el => el.remove());
+            document.body.classList.remove('modal-open', 'swal2-shown');
+        }""")
+        time.sleep(0.5)
     except Exception as e:
         logs.append(f"    - Excepción durante limpieza de modales: {e}")
-    finally:
-        try:
-            sura_page.evaluate("""() => {
-                document.querySelectorAll('.swal2-container').forEach(el => el.remove());
-                document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
-                document.querySelectorAll('.overlay').forEach(el => el.remove());
-                document.body.classList.remove('modal-open', 'swal2-shown');
-            }""")
-        except Exception:
-            pass
 
 def esperar_overlay_oculto(sura_page: Page):
     """Espera a que el spinner/overlay de carga de la página no sea visible."""
@@ -522,7 +478,8 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
     sura_page = getattr(page, 'sura_page', page)
 
     try:
-        # Esperar a que se oculte cualquier overlay previo de carga
+        # Limpieza preventiva obligatoria de modales o alertas residuales de facturas previas
+        limpiar_pantalla_y_modales(sura_page, logs)
         esperar_overlay_oculto(sura_page)
         
         # 2. Buscar número de factura en el campo
@@ -534,70 +491,75 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
         time.sleep(0.5)
         esperar_overlay_oculto(sura_page)
 
-        # Esperar a que cargue algún resultado (puede ser el botón de detalles o el de respuestas)
-        try:
-            sura_page.wait_for_selector("input[name='detalle']", timeout=10000)
-        except PlaywrightTimeoutError:
-            # Si no se encuentra, intentar con un código corregido extraído de los archivos
+        # Esperar a que se actualicen los resultados de búsqueda
+        time.sleep(1)
+        esperar_overlay_oculto(sura_page)
+
+        texto_pagina = sura_page.locator("body").inner_text()
+        if "no se encontraron registros" in texto_pagina.lower():
             codigo_corregido = obtener_codigo_factura_corregido(subfolder_path, codigo_factura)
             if codigo_corregido:
                 logs.append(f"  - Factura {codigo_factura} no encontrada. Reintentando con código corregido {codigo_corregido}...")
                 sura_page.locator("input[placeholder='Ingresa número de factura']").fill(codigo_corregido)
                 sura_page.locator("button.btn.btn-primary.rounded-pill").click()
-                time.sleep(0.5)
+                time.sleep(1)
                 esperar_overlay_oculto(sura_page)
-                try:
-                    sura_page.wait_for_selector("input[name='detalle']", timeout=10000)
-                    codigo_factura = codigo_corregido  # Actualizar el código para el resto del flujo
-                except PlaywrightTimeoutError:
+                texto_pagina = sura_page.locator("body").inner_text()
+                if "no se encontraron registros" in texto_pagina.lower():
                     logs.append(f"  -> ERROR: Tampoco se encontró la factura con el código corregido {codigo_corregido}.")
                     return ESTADO_FALLO, "", codigo_factura, "\n".join(logs)
+                codigo_factura = codigo_corregido
             else:
                 logs.append(f"  -> ERROR: No se encontró la factura {codigo_factura} en los resultados de búsqueda del portal.")
                 return ESTADO_FALLO, "", codigo_factura, "\n".join(logs)
-
-        # Esperar a que desaparezca cualquier overlay antes de interactuar con los resultados
-        esperar_overlay_oculto(sura_page)
 
         # 3. Comprobar si el botón de cargar soportes (Respuesta / btnRes) está visible
         btn_res = sura_page.locator("input.btnRes[title='Cargar soportes de respuesta glosa']").first
         
         if not btn_res.is_visible():
-            logs.append("  - Factura ya radicada anteriormente (Botón de cargar soportes no visible).")
-            logs.append("  - Extrayendo evidencia desde Ver Detalles...")
+            logs.append("  - Factura ya radicada anteriormente o sin opción de respuesta.")
             
-            # Clic en el botón "Ver detalles de factura"
-            sura_page.locator("input[name='detalle']").first.click()
-            time.sleep(2)
-            
-            # Tomar captura de pantalla de los detalles
+            btn_detalle = sura_page.locator("input[name='detalle']").first
             screenshot_path = subfolder_path / "temp_detalles.png"
-            try:
-                sura_page.screenshot(path=str(screenshot_path))
-                # Convertir captura a PDF
-                pdf_path = subfolder_path / "RAD.pdf"
+            
+            if btn_detalle.is_visible():
+                logs.append("  - Extrayendo evidencia desde Ver Detalles...")
+                btn_detalle.click()
+                time.sleep(2)
                 try:
+                    sura_page.screenshot(path=str(screenshot_path))
+                    pdf_path = subfolder_path / "RAD.pdf"
                     with Image.open(screenshot_path) as img:
                         img.convert("RGB").save(pdf_path, "PDF")
                     logs.append(f"  - Evidencia de detalles guardada como PDF: {pdf_path.name}")
                 except Exception as e_pdf:
                     logs.append(f"  - ADVERTENCIA: No se pudo guardar evidencia en PDF: {e_pdf}")
-            finally:
-                if screenshot_path.is_file():
-                    try:
-                        screenshot_path.unlink()
-                    except Exception:
-                        pass
+                finally:
+                    if screenshot_path.is_file():
+                        try: screenshot_path.unlink()
+                        except Exception: pass
+                
+                try:
+                    sura_page.locator("ngb-modal-window button:has-text('Cerrar')").click(timeout=3000)
+                except Exception:
+                    sura_page.keyboard.press("Escape")
+                time.sleep(1)
+            else:
+                logs.append("  - Botón de detalles no disponible. Guardando evidencia de la fila de resultados...")
+                try:
+                    sura_page.screenshot(path=str(screenshot_path))
+                    pdf_path = subfolder_path / "RAD.pdf"
+                    with Image.open(screenshot_path) as img:
+                        img.convert("RGB").save(pdf_path, "PDF")
+                    logs.append(f"  - Evidencia de estado en tabla guardada como PDF: {pdf_path.name}")
+                except Exception as e_pdf:
+                    logs.append(f"  - ADVERTENCIA: No se pudo guardar evidencia en PDF: {e_pdf}")
+                finally:
+                    if screenshot_path.is_file():
+                        try: screenshot_path.unlink()
+                        except Exception: pass
             
-            # Cerrar el modal haciendo clic en el botón "Cerrar"
-            try:
-                sura_page.locator("ngb-modal-window button:has-text('Cerrar')").click(timeout=5000)
-            except PlaywrightTimeoutError:
-                # Fallback: presionar tecla Escape si el botón no responde
-                sura_page.keyboard.press("Escape")
-            time.sleep(1)
-            
-            return ESTADO_OMITIDO_RADICADO, "Ya Radicada", codigo_factura, "\n".join(logs)
+            return ESTADO_OMITIDO_RADICADO, "Ya Radicada / Sin opción de respuesta", codigo_factura, "\n".join(logs)
 
         # 4. Flujo de Radicación (si btn_res está visible)
         esperar_overlay_oculto(sura_page)
@@ -962,40 +924,84 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
             logs.append("  -> ADVERTENCIA: Se alcanzó el tiempo límite de espera para la subida de archivos. Se intentará continuar.")
 
         # Esperar a que el botón Siguiente esté visible y habilitado
-        btn_siguiente = sura_page.locator("button:has-text('Siguiente')")
+        btn_siguiente = sura_page.locator("ngb-modal-window button:has-text('Siguiente'), button:has-text('Siguiente')").first
+        btn_siguiente.wait_for(state="visible", timeout=60000)
+        
+        for _ in range(60):
+            if not btn_siguiente.is_disabled():
+                break
+            time.sleep(1)
+
+        # Esperar a que se oculte cualquier overlay que esté interceptando el modal
         try:
-            btn_siguiente.wait_for(state="visible", timeout=60000)
-            for _ in range(60):
-                if not btn_siguiente.is_disabled():
-                    break
-                time.sleep(1)
-            btn_siguiente.click()
-            logs.append("  - Clic en 'Siguiente'.")
-        except Exception as e_sig:
-            logs.append(f"  - Intento de clic en Siguiente: {e_sig}")
+            modal_overlay = sura_page.locator("ngb-modal-window div.overlay")
+            if modal_overlay.count() > 0:
+                modal_overlay.first.wait_for(state="hidden", timeout=15000)
+        except Exception:
+            pass
+
+        try:
+            btn_siguiente.click(timeout=5000)
+        except Exception:
             btn_siguiente.click(force=True)
+        logs.append("  - Clic en 'Siguiente'.")
 
         time.sleep(1.5)
  
         # Hacer clic en "Confirmar" en el modal
-        btn_confirmar = sura_page.locator("button:has-text('Confirmar')")
-        btn_confirmar.wait_for(state="visible", timeout=15000)
-        btn_confirmar.click()
+        btn_confirmar = sura_page.locator("ngb-modal-window button:has-text('Confirmar'), button:has-text('Confirmar')").first
+        btn_confirmar.wait_for(state="visible", timeout=30000)
+        try:
+            btn_confirmar.click(timeout=5000)
+        except Exception:
+            btn_confirmar.click(force=True)
         logs.append("  - Confirmación de subida enviada.")
  
-        # Esperar alerta de éxito de carga (icono success o texto 'cargado' / 'archivos')
-        try:
-            alerta_exito = sura_page.locator(".swal2-popup.swal2-icon-success, .swal2-html-container:has-text('cargado'), .swal2-html-container:has-text('archivos')").first
-            alerta_exito.wait_for(state="visible", timeout=60000)
-            sura_page.locator("button.swal2-confirm").first.click(timeout=5000)
-            logs.append("  - Alerta de subida exitosa confirmada.")
-        except Exception as e_conf:
-            logs.append(f"  - Aviso esperando confirmación de carga: {e_conf}. Verificando botón Radicar...")
+        # Esperar SweetAlert de confirmación de carga (puede tardar hasta 180s en archivos pesados)
+        logs.append("  - Esperando confirmación de carga de archivos en el servidor...")
+        t_conf_inicio = time.time()
+        timeout_conf = 180
+        carga_exitosa_confirmada = False
 
+        while time.time() - t_conf_inicio < timeout_conf:
+            # 1. Alerta SweetAlert de éxito/aviso de carga
+            swal_popup = sura_page.locator(".swal2-popup")
+            if swal_popup.count() > 0 and swal_popup.first.is_visible():
+                swal_text = swal_popup.inner_text().strip()
+                
+                # SweetAlert de error
+                if sura_page.locator("div.swal2-icon-error").is_visible():
+                    logs.append(f"  -> ERROR en carga de archivos (SweetAlert): {swal_text}")
+                    try:
+                        sura_page.locator("button.swal2-confirm:has-text('OK')").click(timeout=3000)
+                    except Exception: pass
+                    limpiar_pantalla_y_modales(sura_page, logs)
+                    eliminar_soportes_fallidos()
+                    return ESTADO_FALLO, f"Error Carga: {swal_text}", codigo_factura, "\n".join(logs)
 
-        # Hacer clic en "Radicar"
-        sura_page.locator("button:has-text('Radicar')").click()
-        logs.append("  - Clic en el botón 'Radicar'.")
+                # SweetAlert de archivos cargados exitosamente
+                logs.append(f"  - SweetAlert recibido: {swal_text.splitlines()[0]}")
+                btn_ok = sura_page.locator("button.swal2-confirm:has-text('OK'), button.swal2-confirm")
+                if btn_ok.count() > 0 and btn_ok.first.is_visible():
+                    try:
+                        btn_ok.first.click(timeout=3000)
+                    except Exception:
+                        btn_ok.first.click(force=True)
+                carga_exitosa_confirmada = True
+                time.sleep(1)
+                break
+
+            time.sleep(1)
+
+        # Hacer clic en "Radicar" que ahora está visible DENTRO del modal ngb-modal-window
+        btn_radicar = sura_page.locator("ngb-modal-window button:has-text('Radicar')").first
+        btn_radicar.wait_for(state="visible", timeout=30000)
+        for _ in range(30):
+            if not btn_radicar.is_disabled():
+                break
+            time.sleep(1)
+        btn_radicar.click()
+        logs.append("  - Clic en el botón 'Radicar' del modal.")
 
         # Esperar alerta final de Registro exitoso o modal de error ("Atención")
         exito_locator = sura_page.locator("h2#swal2-title:has-text('Registro exitoso')")
@@ -1044,8 +1050,13 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
                         pass
 
             # Clic en Ok final de la alerta
-            sura_page.locator("button.swal2-confirm:has-text('Ok')").click()
-            logs.append("  - Clic final en Ok de confirmación.")
+            try:
+                sura_page.locator("button.swal2-confirm:has-text('Ok')").click(timeout=5000)
+                logs.append("  - Clic final en Ok de confirmación.")
+            except Exception:
+                pass
+            time.sleep(1)
+            limpiar_pantalla_y_modales(sura_page, logs)
 
             # Eliminar del disco los soportes que no pasaron la validación tras intentar todo
             eliminar_soportes_fallidos()
