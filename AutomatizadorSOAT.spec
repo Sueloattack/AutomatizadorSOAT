@@ -2,9 +2,9 @@
 import os
 from pathlib import Path
 
-# Localizar los navegadores de Playwright instalados en la máquina
+# Localizar los componentes de Playwright instalados en la máquina
 local_app_data = os.environ.get('LOCALAPPDATA', '')
-playwright_browsers_src = os.path.join(local_app_data, 'ms-playwright', 'chromium-1181')
+ms_pw_dir = os.path.join(local_app_data, 'ms-playwright')
 
 datas = [
     ('InterfazUsuario/dark_theme.qss', 'InterfazUsuario'),
@@ -13,9 +13,18 @@ datas = [
     ('Recursos/Icons/pingu.png', 'Recursos/Icons'),
 ]
 
-# Si existe la carpeta del navegador chromium-1181, incluirla empaquetada dentro de la estructura de Playwright
-if os.path.exists(playwright_browsers_src):
-    datas.append((playwright_browsers_src, 'playwright/driver/package/.local-browsers/chromium-1181'))
+# Incluir navegadores y componentes de Playwright requeridos para modo normal y segundo plano (headless)
+pw_components = [
+    'chromium-1181',
+    'chromium_headless_shell-1181',
+    'winldd-1007',
+    'ffmpeg-1011'
+]
+
+for comp in pw_components:
+    comp_path = os.path.join(ms_pw_dir, comp)
+    if os.path.exists(comp_path):
+        datas.append((comp_path, f'playwright/driver/package/.local-browsers/{comp}'))
 
 a = Analysis(
     ['main.py'],
