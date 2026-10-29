@@ -340,7 +340,7 @@ def guardar_screenshot_de_error(page, nombre_base: str):
         ruta_screenshot = error_dir / filename
         
         # Tomar la captura de pantalla con timeout de seguridad
-        page.screenshot(path=ruta_screenshot, timeout=5000)
+        page.screenshot(path=ruta_screenshot, timeout=10000, animations='disabled')
         
         # Devolver la ruta donde se guardó para poder registrarla en el log
         return f"Screenshot de error guardado en: {ruta_screenshot}"

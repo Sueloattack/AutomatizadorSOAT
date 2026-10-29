@@ -569,8 +569,8 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
         logs.append("  - Clic en Cargar soportes.")
 
         # Localizar el selector de archivos (ngx-file-drop utiliza un input interno)
-        input_file = sura_page.locator("input.ngx-file-drop__file-input")
-        input_file.wait_for(state="attached", timeout=5000)
+        input_file = sura_page.locator("ngb-modal-window input.ngx-file-drop__file-input, input.ngx-file-drop__file-input").last
+        input_file.wait_for(state="attached", timeout=10000)
         
         # --- INTERCEPTOR DE ANGULAR COMPONENT dropped() ---
         # Sobrescribe el método dropped() en el componente de manera robusta y asíncrona
@@ -648,7 +648,12 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
 
         # Subir el directorio de soportes (usando staging local para evitar bloqueos UNC de Chromium)
         ruta_subida, staging_parent = preparar_directorio_subida(subfolder_path, codigo_factura, logs)
-        input_file.set_input_files(str(ruta_subida))
+        try:
+            input_file.set_input_files(str(ruta_subida), timeout=20000)
+        except Exception as e_upload:
+            logs.append(f"  - Reintentando set_input_files: {e_upload}")
+            input_file = sura_page.locator("ngx-file-drop input[type='file'], input.ngx-file-drop__file-input").last
+            input_file.set_input_files(str(ruta_subida), timeout=30000)
         logs.append(f"  - Subiendo directorio de soportes: {subfolder_path.name}...")
         time.sleep(3)
 
@@ -1056,6 +1061,16 @@ def procesar_carpeta(page: Page, subfolder_path: Path, folder_name: str, context
             except Exception:
                 pass
             time.sleep(1)
+
+            # Cerrar el modal mediante su botón 'Cerrar'
+            btn_cerrar = sura_page.locator("ngb-modal-window button:has-text('Cerrar'), ngb-modal-window button.close")
+            if btn_cerrar.count() > 0 and btn_cerrar.first.is_visible():
+                try:
+                    btn_cerrar.first.click(timeout=3000)
+                except Exception:
+                    btn_cerrar.first.click(force=True)
+                time.sleep(0.5)
+
             limpiar_pantalla_y_modales(sura_page, logs)
 
             # Eliminar del disco los soportes que no pasaron la validación tras intentar todo
