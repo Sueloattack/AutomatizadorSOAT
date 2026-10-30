@@ -5,6 +5,15 @@ import re
 from openpyxl import load_workbook
 from Core.api_gema import query_api_gema
 
+def normalizar_encabezado(texto):
+    """
+    Normaliza el texto de un encabezado eliminando saltos de línea, espacios
+    y pasando todo a minúsculas para comparaciones robustas.
+    """
+    if not texto:
+        return ''
+    return re.sub(r'[\s\n\r\t]+', '', str(texto)).lower()
+
 def limpiar_texto(texto):
     """
     Elimina caracteres que no son válidos en XML 1.0 (causan IllegalCharacterError en openpyxl).
@@ -67,27 +76,39 @@ def procesar_glosas_grupo_sis(ruta_excel: str, lista_glosas_texto: str, progreso
         progreso_callback(f"❌ ERROR FATAL al abrir el Excel: {e}")
         return 0, 0, []
 
-    # 3. Mapeo de columnas según modo
+    # 3. Mapeo de columnas según modo con búsqueda flexible y normalizada
     if modo == "glosas":
-        col_map = {
-            "Factura": None,
-            "Valor Glosa Tarifa": None,
-            "Valor Aceptado": None,
-            "Valor No Aceptado": None,
-            "Observaciones": None,
-            "Glosa Factura": None
+        definicion_columnas = {
+            "Factura": ["factura"],
+            "Valor Glosa Tarifa": ["valorglosatarifa", "valorglosa"],
+            "Valor Aceptado": ["valoraceptado"],
+            "Valor No Aceptado": ["valornoaceptado"],
+            "Observaciones": ["observaciones"],
+            "Glosa Factura": ["glosafactura"]
         }
     else:  # reconsideraciones
-        col_map = {
-            "Factura": None,
-            "Valor Objetado": None,
-            "Aceptado(1:Si/0:No)": None,
-            "Observaciones": None
+        definicion_columnas = {
+            "Factura": ["factura"],
+            "Valor Objetado": ["valorobjetado", "valorglosa", "valorglosatarifa"],
+            "Aceptado(1:Si/0:No)": ["aceptado(1:si/0:no)", "aceptado", "aceptado(1:si/0:no)"],
+            "Observaciones": ["observaciones"]
         }
 
-    encabezados = {str(celda.value).strip(): celda.column for celda in ws[1] if celda.value}
-    for k in col_map.keys():
-        col_map[k] = encabezados.get(k)
+    encabezados_norm = {normalizar_encabezado(celda.value): celda.column for celda in ws[1] if celda.value}
+    col_map = {}
+    for col_key, variantes in definicion_columnas.items():
+        col_idx = None
+        for var in variantes:
+            if var in encabezados_norm:
+                col_idx = encabezados_norm[var]
+                break
+        # Búsqueda fallback si contiene la palabra clave
+        if col_idx is None:
+            for enc_txt, col_num in encabezados_norm.items():
+                if any(var in enc_txt for var in variantes):
+                    col_idx = col_num
+                    break
+        col_map[col_key] = col_idx
 
     missing_cols = [k for k, v in col_map.items() if v is None]
     if missing_cols:
